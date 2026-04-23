@@ -1,0 +1,9 @@
+# Ignore the following files
+*.wav
+*.ogg
+*.mp3
+*.flac
+*.svl
+*.pkl
+
+
