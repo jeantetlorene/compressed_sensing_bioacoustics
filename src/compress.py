@@ -13,7 +13,7 @@ from scipy.io.wavfile import write
 from sklearn.linear_model import Lasso, OrthogonalMatchingPursuit
 from tqdm import tqdm
 
-class Compression_vs2:
+class Compression:
     def __init__(self, folder_audio, folder_saved, method_compression, parameter_compression, converter_path):
         self.folder_audio=folder_audio
         self.files=[f for f in os.listdir(self.folder_audio) if f.endswith(".WAV") or f.endswith(".wav")]
