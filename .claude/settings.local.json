@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3)",
+      "Bash(dir *)",
+      "Bash(python3 *)",
+      "PowerShell(python --version)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(C:\\\\Users\\\\loren\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python3.exe -c \"import h5py; print\\('h5py available'\\)\")"
+    ]
+  }
+}

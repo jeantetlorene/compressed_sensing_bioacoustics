@@ -5,12 +5,16 @@ import torch
 from copy import deepcopy
 import os
 from pathlib import Path
-from tqdm import tqdm
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
+from typing import Tuple
+from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 
 # Suppress only UndefinedMetricWarning
 warnings.filterwarnings(action='ignore', category=UndefinedMetricWarning)
+
+
 
 
 class Model:
@@ -22,15 +26,14 @@ class Model:
         input_shape,
         optimizer_name: str,
         loss_function_name: str,
+        num_classes: int,
         batch_size: int,
         learning_rate: float,
         num_epochs: int,
         metric: str,
         architecture_args: dict,
         shuffle: bool = True,
-        patience=3, min_delta=0.005,
-        task: str = "detection",
-        num_classes: int = None,
+        patience=3, min_delta=0.005
     ):
 
         
@@ -40,33 +43,28 @@ class Model:
         architecture["input_shape"] = input_shape
         self._architecture = architecture
 
-
+    
         # Get Device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        #to save the model
+        #to save the model 
         self.results_path=results_path
         self.optimizer_name = optimizer_name
         self.learning_rate = learning_rate
         self.loss_name = loss_function_name
+        self.num_classes = num_classes
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.n_epochs = num_epochs
         self.metric = metric
-        self.task = task
-        self.num_classes = num_classes
 
-        #self._set_optimizer_and_loss() #now in the train loop
+        self._set_optimizer_and_loss()
 
         #earlystopping
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
         self.min_validation_loss = float('inf')
-
-        #create the saving folder if doesn't exit
-        if not os.path.exists(self.results_path) : 
-            os.makedirs(self.results_path, exist_ok=True)
 
     @staticmethod
     def load_cnn(cnn_dict, device):
@@ -107,7 +105,7 @@ class Model:
     def get_model_dict(self):
         return {"state_dict": self.cnn.state_dict(), "architecture": self._architecture}
 
-    def _set_optimizer_and_loss(self, class_weights=None):
+    def _set_optimizer_and_loss(self):
         """Set the optimizer and loss function"""
         if self.optimizer_name == "adam":
             self.optimizer = torch.optim.Adam(
@@ -117,98 +115,66 @@ class Model:
             raise NotImplementedError("Only Adam optimizer is supported at the moment")
 
         if self.loss_name == "cross_entropy":
-            if class_weights is not None:
-                weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
-                self.criterion = torch.nn.CrossEntropyLoss(weight=weight_tensor)
-            else:
-                self.criterion = torch.nn.CrossEntropyLoss()
+            self.criterion = torch.nn.CrossEntropyLoss()
         else:
             raise NotImplementedError(
                 "Only cross entropy loss is supported at the moment"
             )
-        
-    def _set_scheduler(self):
-        """Set the learning-rate scheduler (must be called after optimizer is created)."""
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer,
-            mode="min",
-            factor=0.5,
-            patience=5
-        )
 
     def get_number_of_parameters(self):
         return sum(p.numel() for p in self.cnn.parameters() if p.requires_grad)
 
     def get_minimum_input_shape(self):
         return self.cnn.calculate_min_input_size()
+   
+    def _create_dataloaders(self,
+        X: np.ndarray,
+        Y: np.ndarray,
+        val_ratio: float = 0.2,
+        seed: int = 42,
+    ) -> Tuple[DataLoader, DataLoader]:
 
-    def _create_dataloaders(
-        self, X: np.ndarray, Y: np.ndarray, val_ratio: float = 0.2, seed: int = 42, num_workers: int = 0
-    ):
-        """Split X/Y into train and val DataLoaders (used when no separate val set is provided)."""
+        # Convert to tensors
         X_tensor = torch.from_numpy(X).float()
-        Y_tensor = torch.from_numpy(Y).long() if self.task == "classification" else torch.from_numpy(Y).float()
+        Y_tensor = torch.from_numpy(Y).long()
 
+        # Add channel dimension if needed
         if X_tensor.ndim == 3:
             X_tensor = X_tensor.unsqueeze(1)
 
+        # ---- EXPLICIT SHUFFLE BEFORE SPLIT ----
         generator = torch.Generator().manual_seed(seed)
         perm = torch.randperm(len(X_tensor), generator=generator)
+
         X_tensor = X_tensor[perm]
         Y_tensor = Y_tensor[perm]
 
-        dataset = torch.utils.data.TensorDataset(X_tensor, Y_tensor)
-        n_val = int(val_ratio * len(dataset))
-        n_train = len(dataset) - n_val
-        train_ds = torch.utils.data.Subset(dataset, range(0, n_train))
-        val_ds = torch.utils.data.Subset(dataset, range(n_train, len(dataset)))
+        dataset = TensorDataset(X_tensor, Y_tensor)
 
-        loader_kwargs = dict(batch_size=self.batch_size)
-        if num_workers > 0:
-            loader_kwargs.update(num_workers=num_workers, pin_memory=True, persistent_workers=True)
+        # ---- train / val split ----
+        n_total = len(dataset)
+        n_val = int(val_ratio * n_total)
+        n_train = n_total - n_val
 
-        train_loader = torch.utils.data.DataLoader(train_ds, shuffle=True, **loader_kwargs)
-        val_loader = torch.utils.data.DataLoader(val_ds, shuffle=False, **loader_kwargs)
+        train_dataset = torch.utils.data.Subset(dataset, range(0, n_train))
+        val_dataset = torch.utils.data.Subset(dataset, range(n_train, n_total))
+
+        # ---- DataLoaders ----
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,   # shuffle each epoch
+        )
+
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+        )
+
         return train_loader, val_loader
-
-    def _create_dataloader(
-        self, X: np.array, Y: np.array, num_workers : int,
-    ) -> torch.utils.data.DataLoader:
-        """Create a dataloader from the given data
-
-        Parameters
-        ----------
-        X : np.array
-            Input data of shape (n_samples,height,width) or (n_samples,channels,height,width). Will add channel dimension if needed.
-        Y : np.array
-            Target data of shape (n_samples,).
-
-        Returns
-        -------
-        loader : torch.utils.data.DataLoader
-            Dataloader with the given data and batch size specified in the constructor.
-
-        """
-        X_tensor = torch.from_numpy(X).float()
-        Y_tensor = torch.from_numpy(Y).long() if self.task == "classification" else torch.from_numpy(Y).float()
-
-        # Reshape X_tensor
-        if len(X_tensor.shape) == 3:
-            X_tensor = X_tensor.unsqueeze(1)
-
-        dataset = torch.utils.data.TensorDataset(X_tensor, Y_tensor)
-        
-        if num_workers>0 :
-            loader = torch.utils.data.DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=self.shuffle,
-            num_workers=num_workers, pin_memory=True,persistent_workers=True)
-        else : 
-            loader = torch.utils.data.DataLoader(
-            dataset, batch_size=self.batch_size, shuffle=self.shuffle)
-        
-        return loader
     
-    def _early_stop(self, val_loss, patience=10, min_delta=0.001):
+    def _early_stop(self, val_loss, patience, min_delta):
         self.early_stop_counter = getattr(self, 'early_stop_counter', 0)
         self.best_val_loss = getattr(self, 'best_val_loss', torch.inf)
         
@@ -224,7 +190,6 @@ class Model:
     
     def _train_one_epoch(self, dataloader):
         self.cnn.train()
-        self.cnn.to(self.device)
         running_loss = 0.0
 
         num_batches = len(dataloader)
@@ -236,7 +201,8 @@ class Model:
             # Reset gradients
             self.optimizer.zero_grad()
             # Forward pass
-            batch_preds = self.cnn.forward(batch_inputs)
+            batch_preds = self.cnn(batch_inputs)
+
             # Compute loss
             loss = self.criterion(batch_preds, batch_targets)
             # Backward and optimize
@@ -250,7 +216,6 @@ class Model:
     
     def _val_one_epoch(self, dataloader):
         self.cnn.eval()
-        self.cnn.to(self.device)
         num_batches = len(dataloader)
         num_samples = len(dataloader.dataset)
     
@@ -263,9 +228,9 @@ class Model:
                 ), batch_targets.to(self.device)
 
                 # Clear the gradients
-                self.optimizer.zero_grad()
+                #self.optimizer.zero_grad()
                 # Forward pass
-                batch_preds = self.cnn.forward(batch_inputs)
+                batch_preds = self.cnn(batch_inputs)
                 # Compute loss
                 loss = self.criterion(batch_preds, batch_targets)
                 # Calculate Loss
@@ -275,94 +240,72 @@ class Model:
 
         return epoch_loss
 
-    def train(self, X_train, Y_train, X_val=None, Y_val=None, save=True, model_name="baseline", early_stopping=True, num_workers=0, patience=10, min_delta=0.001, class_weights=None, val_ratio=0.2, seed=42):
+    def train(self, X, Y, save=True, model_name="baseline", early_stopping=True, resume_from=None, start_epoch=0, patience=10, min_delta=0.001 ):
         
-        # Set optimizer and loss (with optional weights)
-        self._set_optimizer_and_loss(class_weights=class_weights)
-
-
-        # Set scheduler (after optimizer exists)
-        self._set_scheduler()
+        self.cnn.to(self.device)
+        
+        if resume_from and os.path.exists(resume_from):
+            checkpoint = torch.load(resume_from, map_location=self.device)
+            self.cnn.load_state_dict(checkpoint["state_dict"])
+            print(f"Resumed from {resume_from}")
+        
         
         # Create Dataloaders
-        if X_val is None or Y_val is None:
-            train_loader, val_loader = self._create_dataloaders(
-                X_train, Y_train, val_ratio=val_ratio, seed=seed, num_workers=num_workers
-            )
-        else:
-            train_loader = self._create_dataloader(X_train, Y_train, num_workers=num_workers)
-            val_loader = self._create_dataloader(X=X_val, Y=Y_val, num_workers=num_workers)
+        train_loader, val_loader = self._create_dataloaders(X, Y)
         val_losses=[]
         train_losses = []
         min_val_loss = torch.inf
 
-
-        epoch_bar = tqdm(range(self.n_epochs), desc="Training", unit="epoch")
-
-        for epoch in epoch_bar:
+        for epoch in tqdm(range(self.n_epochs)):
             epoch_train_loss=self._train_one_epoch(train_loader)
             train_losses.append(epoch_train_loss)
             
             epoch_val_loss = self._val_one_epoch(val_loader)
             val_losses.append(epoch_val_loss)
 
-            # Save best model BEFORE scheduler step
-            if save and epoch_val_loss < min_val_loss:
+            torch.cuda.empty_cache()  # clear cache each epoch
+
+            # Save every 5 epochs regardless
+            if save and epoch % 5 == 0:
+                self.save_model(self.results_path, f"{model_name}_epoch{epoch}")
+            
+            # Save best
+            if save and min_val_loss > epoch_val_loss:
                 min_val_loss = epoch_val_loss
                 self.save_model(self.results_path, model_name)
             
-            # NEW: update LR based on validation loss
-            self.scheduler.step(epoch_val_loss)
 
-            current_lr = self.optimizer.param_groups[0]["lr"]
-
-            # Update progress bar with current losses
-            epoch_bar.set_postfix({
-                'lr':         f'{current_lr:.2e}',
-                'train_loss': f'{epoch_train_loss:.4f}',
-                'val_loss':   f'{epoch_val_loss:.4f}',
-                'best_val':   f'{min_val_loss:.4f}' if min_val_loss != torch.inf else 'N/A'
-            })
-            
             if early_stopping and self._early_stop(epoch_val_loss, patience=patience, min_delta=min_delta):
-                tqdm.write(f"Early stopping triggered at epoch {epoch+1}")
-                break
-        
-        
-        
+                            tqdm.write(f"Early stopping triggered at epoch {epoch+1}")
+                            break
+   
         return train_losses, val_losses
 
-    def evaluate(self, X_val, Y_val, metric=None, threshold=None, num_workers=0, print_report=False):
+    def evaluate(self, X, Y, metric=None, threshold=None, print_report=False):
         if metric is None:
             metric = self.metric
-        loader = self._create_dataloader(X=X_val, Y=Y_val,num_workers=num_workers)
+        _, loader = self._create_dataloaders(X, Y)
         self.cnn.eval()
 
+        targets = []
+        predictions = []
+
         with torch.no_grad():
-            total_loss = 0
-            targets = []
-            predictions = []
+
             for batch_inputs, batch_targets in loader:
-                batch_inputs, batch_targets = batch_inputs.to(
-                    self.device
-                ), batch_targets.to(self.device)
-                # print("targets: ", batch_targets)
-                batch_preds = self.cnn.forward(batch_inputs)
-                total_loss += self.criterion(batch_preds, batch_targets).item()
-                
-                prediction = batch_preds.argmax(dim=1).cpu()
-                if self.task == "detection":
-                    if threshold is not None:
-                        prediction = (batch_preds > threshold).float().cpu()
-                    target = batch_targets.argmax(dim=1).cpu()
-                else:
-                    target = batch_targets.cpu()
+                batch_inputs = batch_inputs.to(self.device)
+                batch_targets = batch_targets.to(self.device)
 
-                predictions.extend(prediction.detach().numpy())
-                targets.extend(target.detach().numpy())
+                # Forward pass (raw logits)
+                logits = self.cnn(batch_inputs)
 
-            f1_avg = "macro" if self.task == "classification" else "binary"
-            f1 = f1_score(targets, predictions, average=f1_avg)
+                # Multiclass prediction
+                preds = logits.argmax(dim=1)
+
+                predictions.extend(preds.cpu().numpy())
+                targets.extend(batch_targets.cpu().numpy())
+
+            f1 = f1_score(targets, predictions, average="macro")
             report = classification_report(targets, predictions)
             confusion = confusion_matrix(targets, predictions)
             if print_report:
@@ -382,9 +325,12 @@ class Model:
 
     def save_model(self, path, model_name):
         save_path = os.path.join(Path(path, model_name + "_cnn_state.pth"))
-        self._model_state_dict = deepcopy(self.get_model_dict())
-        torch.save(self._model_state_dict, save_path)
+        model_dict = self.get_model_dict()
+        model_dict["state_dict"] = {k: v.detach().cpu() for k, v in model_dict["state_dict"].items()}
+
+        torch.save(model_dict, save_path)
         #print(f"CNN model state dict saved to {save_path}!")
+        
 
     def __call__(self, x):
         return self.cnn(x)

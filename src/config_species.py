@@ -95,6 +95,38 @@ species_settings = {
             "fc_layers": 2,
             "conv_padding": None,
         }
+    },
+
+    "bats": {
+        "data": {
+            "species_folder": Path("E:/Bioacoustics_compressed_sensing/Bats"),
+            "positive_class":"" ,
+            "negative_class": "",
+        },
+        "preprocessing": {
+            "sample_rate": 256000,
+            "lowpass_cutoff": 2000,
+            "downsample_rate": 128000,
+            "nyquist_rate": 2400,
+            "segment_duration": 1,
+            "nb_negative_class": 10,
+            "audio_extension": ".wav",
+            "n_fft": 512,
+            "hop_length": 128*3,
+            "n_mels": 128,
+            "f_min": 15000,
+            "f_max": 64000,
+        },
+        "cnn_architecture": {
+            "conv_layers": 1,
+            "conv_filters": 8,
+            "dropout_rate": 0.5,
+            "conv_kernel": 8,
+            "max_pooling_size": 4,
+            "fc_units": 32,
+            "fc_layers": 2,
+            "conv_padding": None,
+        }
     }
 }
 

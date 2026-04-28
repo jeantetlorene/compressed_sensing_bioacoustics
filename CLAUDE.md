@@ -62,3 +62,10 @@ All hyperparameters flow through dataclasses in `src/settings.py` (`DataConfig`,
 - Several legacy/commented-out functions exist in `compress.py` (e.g., `compress_one_file_legacy`) — do not remove them without confirming they are truly dead.
 -Several legacy/commented-out functions are the originals functions that we want to keep while the associated ones were created by codex to improve the original ones. We want to figure out which one is better or even improve these functions. 
 - The CNN's `_get_min_input_size()` method is used to validate spectrogram dimensions before training; if architecture parameters change, re-check that input shapes are compatible.
+
+## Data paths
+Raw data lives at: Users/loren/Documents/Postdoc/Compressed_sensing/Data
+when specify a species, you just need to add the species to the path, like : Users/loren/Documents/Postdoc/Compressed_sensing/Data/Bats
+Processed data are located in the raw data folder based on the species
+
+When creating notebooks or data functions, always reference these paths.
