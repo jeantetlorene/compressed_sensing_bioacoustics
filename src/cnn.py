@@ -107,8 +107,9 @@ class BaseCNN(nn.Module):
         max_pooling_size,
         fc_units,
         fc_layers,
-        conv_padding = None, 
-        stride_maxpool = None, 
+        conv_padding = None,
+        stride_maxpool = None,
+        num_classes: int = 2,
     ):
         """Base CNN model for the classification of the images
 
@@ -130,6 +131,8 @@ class BaseCNN(nn.Module):
             The number of units in the fully connected layers
         fc_layers : int
             The number of fully connected layers
+        num_classes : int
+            The number of output classes (2 for binary detection, >2 for multi-class classification)
         """
         super(BaseCNN, self).__init__()
         self.input_shape = input_shape
@@ -142,7 +145,8 @@ class BaseCNN(nn.Module):
         self.fc_units = fc_units
         self.n_fc_layers = fc_layers
         self.conv_padding=conv_padding
-        if stride_maxpool is None : 
+        self.num_classes = num_classes
+        if stride_maxpool is None :
             self.stride_maxpool= max_pooling_size
         else : self.stride_maxpool= stride_maxpool
 
@@ -189,7 +193,7 @@ class BaseCNN(nn.Module):
             input_units = self.fc_units
 
         # Output layer
-        self.output_layer = nn.Linear(self.fc_units, 2)
+        self.output_layer = nn.Linear(self.fc_units, self.num_classes)
         self.softmax = nn.Softmax(dim=1)
 
     def _calc_cnn_output_dim(self) -> tuple:

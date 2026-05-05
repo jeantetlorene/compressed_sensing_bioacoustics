@@ -6,7 +6,14 @@
       "Bash(python3 *)",
       "PowerShell(python --version)",
       "PowerShell(Get-Command *)",
-      "PowerShell(C:\\\\Users\\\\loren\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python3.exe -c \"import h5py; print\\('h5py available'\\)\")"
+      "PowerShell(C:\\\\Users\\\\loren\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python3.exe -c \"import h5py; print\\('h5py available'\\)\")",
+      "Bash(python -c \"import json; nb=json.load\\(open\\('notebooks/data_preprocessing_bats_clean.ipynb'\\)\\); [print\\(f'Cell {i}: {c[\\\\\"cell_type\\\\\"]} | src_len={len\\(\\\\\"\\\\\".join\\(c[\\\\\"source\\\\\"]\\)\\)} | outputs_len={sum\\(len\\(str\\(o\\)\\) for o in c.get\\(\\\\\"outputs\\\\\",[]\\)\\)}'\\) for i,c in enumerate\\(nb['cells']\\)]\")",
+      "Bash(where python3 *)",
+      "Bash(where python *)",
+      "Bash(conda run *)",
+      "Read(//c/Users/loren/anaconda3/envs/cs_HeAims/**)",
+      "Bash(/c/Users/loren/anaconda3/envs/cs_HeAims/python.exe -c \"import json; nb=json.load\\(open\\('notebooks/data_preprocessing_bats_clean.ipynb'\\)\\); [print\\(f'Cell {i}: {c[\\\\\"cell_type\\\\\"]} | src_len={len\\(\\\\\"\\\\\".join\\(c[\\\\\"source\\\\\"]\\)\\)}'\\) for i,c in enumerate\\(nb['cells']\\)]\")",
+      "Bash(/c/Users/loren/anaconda3/python.exe -c \"import json; nb=json.load\\(open\\('notebooks/data_preprocessing_bats_clean.ipynb'\\)\\); [print\\(f'Cell {i}: {c[\\\\\"cell_type\\\\\"]} | src_len={len\\(\\\\\"\\\\\".join\\(c[\\\\\"source\\\\\"]\\)\\)}'\\) for i,c in enumerate\\(nb['cells']\\)]\")"
     ]
   }
 }

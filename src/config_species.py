@@ -100,16 +100,12 @@ species_settings = {
     "bats": {
         "data": {
             "species_folder": Path("E:/Bioacoustics_compressed_sensing/Bats"),
-            "positive_class":"" ,
+            "positive_class":"bats",
             "negative_class": "",
         },
         "preprocessing": {
             "sample_rate": 256000,
-            "lowpass_cutoff": 2000,
             "downsample_rate": 128000,
-            "nyquist_rate": 2400,
-            "segment_duration": 1,
-            "nb_negative_class": 10,
             "audio_extension": ".wav",
             "n_fft": 512,
             "hop_length": 128*3,
@@ -118,14 +114,15 @@ species_settings = {
             "f_max": 64000,
         },
         "cnn_architecture": {
-            "conv_layers": 1,
-            "conv_filters": 8,
+            "conv_layers": 2,
+            "conv_filters": 16,
             "dropout_rate": 0.5,
-            "conv_kernel": 8,
+            "conv_kernel": 16,
             "max_pooling_size": 4,
             "fc_units": 32,
             "fc_layers": 2,
             "conv_padding": None,
+            "num_classes": 4,  # update to actual number of bat species classes
         }
     }
 }

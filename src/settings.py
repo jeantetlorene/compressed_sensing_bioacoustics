@@ -62,6 +62,7 @@ class ArchitectureConfig(BaseConfig):
     fc_layers: int = 2
     conv_padding: str = None
     stride_maxpool: int = None
+    num_classes: int = 2
 
 
 @dataclass

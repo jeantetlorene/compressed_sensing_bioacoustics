@@ -1,5 +1,6 @@
 from pathlib import Path
 from collections import defaultdict
+from glob import glob
 import json
 import pickle
 import numpy as np
@@ -37,13 +38,17 @@ class BatsDatasetCreator:
         test_txt,
         label_map_path,
         filters_path,
+        sample_rate=256000,
         downsample_rate=128000,
         window_size_sec=1,
         n_fft=512,
         hop_length=384,
         n_mels=128,
-        fmin=15000,
-        fmax=64000,
+        f_min=15000,
+        f_max=64000,
+        method_compression=None,
+        parameter_compression=None,
+        **kwargs,
     ):
         """
         Parameters
@@ -53,25 +58,33 @@ class BatsDatasetCreator:
         test_txt        : Path to DataFiles/test.txt
         label_map_path  : Path to labelName_to_labelInd JSON
         filters_path    : Path to the bats_filters/ directory
+        sample_rate     : Original sample rate of the recordings
         downsample_rate : Target sample rate after resampling (default: 128000 Hz)
         window_size_sec : Duration of each window in seconds (default: 1)
         n_fft           : FFT window size for mel-spectrogram
         hop_length      : Hop length for mel-spectrogram
         n_mels          : Number of mel frequency bins
-        fmin            : Minimum frequency for mel-spectrogram (Hz)
-        fmax            : Maximum frequency for mel-spectrogram (Hz)
+        f_min           : Minimum frequency for mel-spectrogram (Hz)
+        f_max           : Maximum frequency for mel-spectrogram (Hz)
+        method_compression   : None (wav), 'cs', or codec name e.g. 'flac'
+        parameter_compression : Compression parameter (quality level, CS ratio, etc.)
+        **kwargs        : Absorbs unused keys from config.preprocessing.dict()
         """
         self.audio_path = Path(audio_path)
+        self.method_compression = method_compression
+        self.parameter_compression = parameter_compression
+        self.species_folder = Path(audio_path).parent
         self.train_txt = Path(train_txt)
         self.test_txt = Path(test_txt)
         self.filters_path = Path(filters_path)
+        self.original_sample_rate = sample_rate
         self.downsample_rate = downsample_rate
         self.window_size = window_size_sec * downsample_rate
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.n_mels = n_mels
-        self.fmin = fmin
-        self.fmax = fmax
+        self.fmin = f_min
+        self.fmax = f_max
 
         with open(label_map_path) as f:
             self.label_map = json.loads(json.load(f))
@@ -85,10 +98,38 @@ class BatsDatasetCreator:
         return filename.split("_")[1]
 
     def _load_audio(self, filename):
-        """Load a .wav file at its native sample rate using soundfile (faster than librosa)."""
-        path = self.audio_path / f"{filename}.wav"
-        audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
-        return audio, sr
+        """Load audio for one file, dispatching on self.method_compression.
+
+        Returns (audio, sr). For CS-reconstructed .npy files sr is self.downsample_rate
+        (assumed already at target rate); for wav/codec files sr is the native sample rate.
+        """
+        method = self.method_compression
+        param  = self.parameter_compression
+
+        if method is None:
+            path = self.audio_path / f"{filename}.wav"
+            audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
+            return audio, sr
+
+        elif method == "cs":
+            cs_dir = self.species_folder / "Compressed_Audio" / f"cs_reconstructed_{param}"
+            matches = glob(str(cs_dir / f"{filename}_*.npy"))
+            if not matches:
+                raise FileNotFoundError(
+                    f"No CS-reconstructed file found for '{filename}' in {cs_dir}"
+                )
+            if len(matches) > 1:
+                raise ValueError(
+                    f"Multiple CS-reconstructed files found for '{filename}': {matches}"
+                )
+            audio = np.load(matches[0]).astype(np.float32)
+            return audio, self.original_sample_rate
+
+        else:
+            codec_dir = self.species_folder / "Compressed_Audio" / f"{method}_{param}"
+            path = codec_dir / f"{filename}_{method}_{param}.{method}"
+            audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
+            return audio, sr
 
     def _downsample(self, audio, orig_sr):
         """Downsample audio to self.downsample_rate."""
@@ -311,13 +352,20 @@ class BatsDatasetCreator:
         """Save X and Y as pickle files.
 
         Files are written to:
-            output_path/X_bats_{dataset_type}.pkl
-            output_path/Y_bats_{dataset_type}.pkl
+            output_path/bats_{X|Y}_{dataset_type}.pkl                    (no compression)
+            output_path/bats_{X|Y}_{dataset_type}_{method}_{param}.pkl   (with compression)
         """
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
+
+        suffix = (
+            f"_{self.method_compression}_{self.parameter_compression}"
+            if self.method_compression is not None
+            else ""
+        )
+
         for name, data in [("X", X), ("Y", Y)]:
-            path = output_path / f"{name}_bats_{dataset_type}.pkl"
+            path = output_path / dataset_type /f"bats_{name}_{dataset_type}{suffix}.pkl"
             with open(path, "wb") as f:
                 pickle.dump(data, f, protocol=4)
             print(f"Saved → {path}")

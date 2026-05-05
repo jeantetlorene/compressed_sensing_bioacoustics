@@ -34,9 +34,10 @@ class Model:
     ):
 
         
-        architecture = architecture_args
+        architecture = architecture_args.copy()
+        if num_classes is not None:
+            architecture["num_classes"] = num_classes
         self.cnn = BaseCNN(input_shape=input_shape, **architecture)
-        architecture = architecture.copy()
         architecture["input_shape"] = input_shape
         self._architecture = architecture
 
@@ -127,13 +128,12 @@ class Model:
                 "Only cross entropy loss is supported at the moment"
             )
         
-    def _set_scheduler(self):
-        """Set the learning-rate scheduler (must be called after optimizer is created)."""
+    def _set_scheduler(self, patience=15):
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer,
             mode="min",
             factor=0.5,
-            patience=5
+            patience=patience
         )
 
     def get_number_of_parameters(self):
@@ -262,8 +262,6 @@ class Model:
                     self.device
                 ), batch_targets.to(self.device)
 
-                # Clear the gradients
-                self.optimizer.zero_grad()
                 # Forward pass
                 batch_preds = self.cnn.forward(batch_inputs)
                 # Compute loss
@@ -275,14 +273,14 @@ class Model:
 
         return epoch_loss
 
-    def train(self, X_train, Y_train, X_val=None, Y_val=None, save=True, model_name="baseline", early_stopping=True, num_workers=0, patience=10, min_delta=0.001, class_weights=None, val_ratio=0.2, seed=42):
+    def train(self, X_train, Y_train, X_val=None, Y_val=None, save=True, model_name="baseline", early_stopping=True, num_workers=0, patience=10, min_delta=0.001, class_weights=None, val_ratio=0.2, seed=42, scheduler_patience=15):
         
         # Set optimizer and loss (with optional weights)
         self._set_optimizer_and_loss(class_weights=class_weights)
 
 
         # Set scheduler (after optimizer exists)
-        self._set_scheduler()
+        self._set_scheduler(patience=scheduler_patience)
         
         # Create Dataloaders
         if X_val is None or Y_val is None:
