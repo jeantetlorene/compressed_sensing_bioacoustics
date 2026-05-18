@@ -93,7 +93,7 @@ def parse_args():
                         help="Frame length in samples.")
     parser.add_argument("--overlap", type=float, default=0.5,
                         help="Fractional frame overlap [0, 1).")
-    parser.add_argument("--compression-rate", type=float, default=0.2,
+    parser.add_argument("--compression-rate", type=float, default=0.1,
                         help="Fraction of measurements to keep (M = rate * N).")
     parser.add_argument("--n-jobs", type=int, default=max(1, os.cpu_count() - 1),
                         help="Parallel workers (-1 = all cores).")

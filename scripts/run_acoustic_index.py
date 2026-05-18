@@ -8,7 +8,7 @@ from maad import sound, features
 # USER SETTINGS
 # =========================
 
-folder=r"c:\Users\loren\Documents\Postdoc\Compressed_sensing\Data\Thyolo"
+folder=r"E:\AIMS_dataset\bioacoustics_compression\data\PTW"
 AUDIO_FOLDER = Path(folder, "Audio")
 OUTPUT_FOLDER = Path(folder, "Results_maad")
 
@@ -20,14 +20,14 @@ NO_OVERLAP = 256
 
 # Frequency limits
 FMIN = 1000
-FMAX = 10000
+FMAX = 12000
 
 # ADI settings
 ADI_BIN_STEP = 500
 ADI_DB_THRESHOLD = -50
 
 # Bioacoustic index frequency band
-BI_FLIM = (1000, 10000)
+BI_FLIM = (1000, 12000)
 
 # =========================
 # FUNCTIONS
