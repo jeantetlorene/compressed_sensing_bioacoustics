@@ -15,7 +15,7 @@
 ## To Do Now
 - [ ] Find a title 
 - [ ] 1 paragraph in the Introduction: what has been done in bioacoustics/ecology and data compression
-- [ ] 1 paragraph in the Introduction: description of the study
+- [ ] 1 paragraph in the Introduction: description of compressed sensing
 - [ ] Include references in the Introduction
 - [ ] Write up the Results section
 - [ ] Explore autoencoders
