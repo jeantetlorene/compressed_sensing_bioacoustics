@@ -12,13 +12,14 @@
 | July | Experiment the autoencoder |
 | August | Discussion |
 
-## To Do Now
+## To Do for next meeting
 - [ ] Find a title 
 - [ ] 1 paragraph in the Introduction: what has been done in bioacoustics/ecology and data compression
 - [ ] 1 paragraph in the Introduction: description of compressed sensing
 - [ ] Include references in the Introduction
 - [ ] Write up the Results section
 - [ ] Explore autoencoders
+- [ ] write M&M (Lorène)
 
 ## To Do 
 - [ ] Title
