@@ -13,14 +13,12 @@
 | August | Discussion |
 
 ## To Do for next meeting
-- [ ] Find a title 
-- [ ] 1 paragraph in the Introduction: what has been done in bioacoustics/ecology and data compression (Steffen)
-- [ ] 1 paragraph in the Introduction: description of compressed sensing (Karina)
-- [ ] Include references in the Introduction (Steffen / Lorène)
+- [ ] Reorganise Introduction (Steffen/ Karina)
+- [ ] Include references in the Introduction (Steffen / Karina)
 - [ ] Table/Plots for the Results section (Lorène)
-- [ ] Write up the Results section (deadline : 15/07 ; Milanto / Steffen)
 - [ ] Explore autoencoders (Milanto) 
-- [ ] write M&M (Lorène)
+- [ ] write M&M data compression part  (Lorène/ Karina)
+- [ ] write M&M Evaluation / Experimental design  (Lorène)
 
 ## To Do 
 - [ ] Title
