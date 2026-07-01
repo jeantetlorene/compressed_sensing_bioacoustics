@@ -9,7 +9,7 @@
 | Month | Task |
 |-------|------|
 | June | Introduction / Methods & Materials / Results |
-| July | Experiment the autoencoder |
+| July | Experiment the autoencoder / Introduction / Methods & Materials / Results |
 | August | Discussion |
 
 ## To Do for next meeting
