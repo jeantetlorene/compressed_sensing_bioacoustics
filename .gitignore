@@ -5,5 +5,7 @@
 *.flac
 *.svl
 *.pkl
-
+checkpoints/
+checkpoints_demo/
+*.pt
 

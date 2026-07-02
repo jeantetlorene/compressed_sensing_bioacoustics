@@ -28,7 +28,7 @@ class Compression:
         if self.method_compression in ["mp3", "aac"]:
             self.parameters = ["-b:a", parameter_compression]
         elif self.method_compression=="opus":
-            self.parameters = ["-b:a", parameter_compression, "-ar", "24000"]
+            self.parameters = ["-b:a", parameter_compression]
         elif self.method_compression=="ogg":
             self.parameters=["-qscale:a", str(parameter_compression)]
         elif self.method_compression=='flac':

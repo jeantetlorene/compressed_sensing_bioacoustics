@@ -4,6 +4,8 @@ import re
 import numpy as np
 import random
 import librosa
+import subprocess
+import tempfile
 from scipy import signal
 from random import randint
 import pickle
@@ -65,6 +67,62 @@ class Preprocessing:
     def update_audio_path(self, audio_path):
         self.audio_path = Path(self.species_folder, audio_path)
 
+
+
+
+    def load_audio_ffmpeg(self, audio_path):
+        """
+        Decode an audio file with FFmpeg and return the audio samples
+        and sampling rate.
+
+        Parameters
+        ----------
+        audio_path : str or Path
+
+        Returns
+        -------
+        audio : np.ndarray
+            Shape (n_samples,) for mono or (n_channels, n_samples) for stereo.
+        sr : int
+            Sampling rate.
+        """
+
+        # Obtain the sampling rate with ffprobe
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "a:0",
+                "-show_entries", "stream=sample_rate",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(audio_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        sr = int(probe.stdout.strip())
+
+        # Decode to raw PCM
+        process = subprocess.run(
+            [
+                "ffmpeg",
+                "-v", "error",
+                "-i", str(audio_path),
+                "-ac", "1",             #mix to mono
+                "-f", "f32le",          # 32-bit float PCM
+                "-acodec", "pcm_f32le",
+                "-"
+            ],
+            stdout=subprocess.PIPE,
+            check=True,
+        )
+
+        audio = np.frombuffer(process.stdout, dtype=np.float32)
+
+        return audio, sr
+
     def read_audio_file(self, file_name, method_compression, parameter_compression):
         """
         file_name: string, name of file including extension, e.g. "audio1.wav"
@@ -72,7 +130,7 @@ class Preprocessing:
         """
         print(file_name)
         # Get the path to the file
-        if method_compression==None:
+        if method_compression is None:
             audio_path=Path(self.audio_path, file_name+self.audio_extension)
         
         elif method_compression=="cs": 
@@ -93,9 +151,13 @@ class Preprocessing:
         # Read the amplitudes and sample rate     
         if method_compression=="cs":
             audio_amps=np.load(audio_path) 
-            audio_sample_rate= self.original_sample_rate  
-        else :   
+            audio_sample_rate= self.original_sample_rate 
+
+        elif method_compression==None : 
             audio_amps, audio_sample_rate = librosa.load(audio_path, sr=None)
+
+        else :   
+            audio_amps, audio_sample_rate = self.load_audio_ffmpeg(audio_path)
         
 
         return audio_amps, audio_sample_rate
@@ -554,7 +616,7 @@ class Preprocessing:
             else : 
                 amplitudes=audio_amps
                 sample_rate= original_sample_rate
-            
+
             del audio_amps
 
             if noise_reduction==True: 
@@ -589,6 +651,7 @@ class Preprocessing:
                 # Append the segments and labels
                 X_calls.extend(X_data)
                 Y_calls.extend(y_data) 
+
             
         print("Nb of labels ", np.unique(Y_calls, return_counts=True))   
         

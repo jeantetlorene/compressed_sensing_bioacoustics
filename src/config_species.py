@@ -106,6 +106,8 @@ species_settings = {
         "preprocessing": {
             "sample_rate": 256000,
             "downsample_rate": 128000,
+            "nyquist_rate": 9200,
+            "lowpass_cutoff": 9000,
             "audio_extension": ".wav",
             "n_fft": 512,
             "hop_length": 128*3,

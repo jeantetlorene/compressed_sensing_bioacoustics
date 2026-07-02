@@ -351,7 +351,8 @@ class Model:
                 prediction = batch_preds.argmax(dim=1).cpu()
                 if self.task == "detection":
                     if threshold is not None:
-                        prediction = (batch_preds > threshold).float().cpu()
+                        probs = torch.softmax(batch_preds, dim=1)
+                        prediction = (probs > threshold).float().cpu()
                     target = batch_targets.argmax(dim=1).cpu()
                 else:
                     target = batch_targets.cpu()

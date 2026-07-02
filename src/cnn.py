@@ -194,7 +194,6 @@ class BaseCNN(nn.Module):
 
         # Output layer
         self.output_layer = nn.Linear(self.fc_units, self.num_classes)
-        self.softmax = nn.Softmax(dim=1)
 
     def _calc_cnn_output_dim(self) -> tuple:
         """Calculate output dimension of the CNN part of the network
@@ -253,5 +252,4 @@ class BaseCNN(nn.Module):
         # print("x size: ", x.size())
         x = self.fc_layers(x)
         x = self.output_layer(x)
-        x = self.softmax(x)
         return x
