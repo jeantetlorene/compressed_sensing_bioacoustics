@@ -103,12 +103,12 @@ class Preprocessing:
         )
 
         sr = int(probe.stdout.strip())
-
+       
         # Decode to raw PCM
         process = subprocess.run(
             [
                 "ffmpeg",
-                "-v", "error",
+                "-loglevel", "fatal",
                 "-i", str(audio_path),
                 "-ac", "1",             #mix to mono
                 "-f", "f32le",          # 32-bit float PCM
@@ -118,6 +118,8 @@ class Preprocessing:
             stdout=subprocess.PIPE,
             check=True,
         )
+     
+
 
         audio = np.frombuffer(process.stdout, dtype=np.float32)
 

@@ -21,7 +21,7 @@ species = "thyolo"
 # method -> list of parameters. Use "none" for the uncompressed baseline (built
 # automatically below; you don't need to list it here).
 jobs = {
-    "mp3":  ["32k", "56k", "96k"],
+    #"mp3":  ["32k", "56k", "96k"],
     "opus": ["8k", "48k", "112k"],
     "aac":  ["8k", "40k", "96k"],
     "ogg":  ["0", "4", "8"],
