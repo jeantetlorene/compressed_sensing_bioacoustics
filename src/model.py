@@ -112,7 +112,7 @@ class Model:
         """Set the optimizer and loss function"""
         if self.optimizer_name == "adam":
             self.optimizer = torch.optim.Adam(
-                self.cnn.parameters(), lr=self.learning_rate
+                self.cnn.parameters(), lr=self.learning_rate, weight_decay=5e-4
             )
         else:
             raise NotImplementedError("Only Adam optimizer is supported at the moment")
@@ -128,12 +128,13 @@ class Model:
                 "Only cross entropy loss is supported at the moment"
             )
         
-    def _set_scheduler(self, patience=15):
+    def _set_scheduler(self, patience=4):
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer,
             mode="min",
             factor=0.5,
-            patience=patience
+            patience=patience,
+            min_lr=1e-6,
         )
 
     def get_number_of_parameters(self):

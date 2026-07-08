@@ -33,13 +33,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import f1_score
 
 _src = Path(__file__).resolve().parent.parent / "src"
 if str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
 
 from config_species import get_settings
+from evaluation import Evaluation
 from model import Model
 from settings import Config
 
@@ -62,7 +62,7 @@ SPECIES_ARCH = {
     "gibbon": dict(
         conv_layers=1, fc_layers=2, conv_kernel=8, conv_filters=8,
         dropout_rate=0.5, fc_units=32, max_pooling_size=4,
-        learning_rate=0.001, num_epochs=50, batch_size=128,
+        learning_rate=0.0001, num_epochs=50, batch_size=128,
     ),
 }
 
@@ -70,6 +70,12 @@ SPECIES_FOLDER = {
     "thyolo": "C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Thyolo",
     "ptw":    "C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Ptw",
     "gibbon": "C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Gibbon",
+}
+
+SPECIES_EVAL = {
+    "thyolo": dict(overlap=0.10, nb_to_group=0, threshold=0.8, step_size=1),
+    "ptw":    dict(overlap=0.25, nb_to_group=2, threshold=0.8, step_size=1),
+    "gibbon": dict(overlap=0.25, nb_to_group=2, threshold=0.8, step_size=1),
 }
 
 
@@ -111,21 +117,6 @@ def load_dataset(species_folder, species, dataset_type="train",
     logging.info("Loaded %s set (%d samples) from %s", dataset_type, len(X), x_path)
     return X, Y
 
-
-def batch_predict(model, inputs, batch_size=64):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
-    model.eval()
-    X_tensor = torch.from_numpy(inputs).float()
-    if X_tensor.ndim == 3:
-        X_tensor = X_tensor.unsqueeze(1)
-    loader = torch.utils.data.DataLoader(X_tensor, batch_size=batch_size, shuffle=False)
-    all_preds = []
-    with torch.no_grad():
-        for batch in loader:
-            batch = batch.to(device)
-            all_preds.append(model(batch).argmax(dim=1).cpu())
-    return torch.cat(all_preds).numpy()
 
 
 def save_loss_plot(train_losses, val_losses, out_path: Path, title: str) -> None:
@@ -211,7 +202,12 @@ def main():
     settings = get_settings(species)
     config = Config(settings)
     config.data.species_folder = args.species_folder or SPECIES_FOLDER[species]
-    config.preprocessing.audio_extension = ".npy"
+    if method_compression == "cs":
+        config.preprocessing.audio_extension = ".npy"
+    elif method_compression in ("mp3", "aac", "opus", "ogg", "flac"):
+        config.preprocessing.audio_extension = f".{method_compression}"
+    else:
+        config.preprocessing.audio_extension = ".wav"
 
     # Architecture and training hyperparameters (override defaults with notebook-tuned values)
     arch = SPECIES_ARCH[species]
@@ -246,12 +242,24 @@ def main():
     X_val, Y_val = load_dataset(
         config.data.species_folder, config.data.positive_class, dataset_type="val",
         method_compression=method_compression, parameter_compression=parameter_compression)
-    X_test, Y_test = load_dataset(
-        config.data.species_folder, config.data.positive_class, dataset_type="test",
-        method_compression=method_compression, parameter_compression=parameter_compression)
 
-    all_train_losses, all_val_losses, f1_scores = [], [], []
+    all_train_losses, all_val_losses = [], []
+    f1_scores, f1_scores_full, precision_scores, recall_scores = [], [], [], []
     model_filename = f"{tag}_cnn_state.pth"
+
+    eval_params = SPECIES_EVAL[species]
+    evaluation = Evaluation(
+        species_folder=config.data.species_folder,
+        settings=config,
+        overlap=eval_params["overlap"],
+        nb_to_group=eval_params["nb_to_group"],
+        threshold=eval_params["threshold"],
+        step_size=eval_params["step_size"],
+        method_compression=method_compression,
+        parameter_compression=parameter_compression,
+        force_calc_amplitudes=False,
+        audio_extension=config.preprocessing.audio_extension,
+    )
 
     for i in range(args.n_runs):
         torch.cuda.empty_cache()
@@ -269,13 +277,11 @@ def main():
             X_train=X_train, Y_train=Y_train,
             X_val=X_val, Y_val=Y_val,
             model_name=tag,
-            early_stopping=True, patience=15, min_delta=0.0005,
+            early_stopping=True, patience=10, min_delta=0.005,
         )
         del model
 
         # Save raw losses
-        np.save(save_path / f"train_losses_run{i}.npy", np.array(train_losses))
-        np.save(save_path / f"val_losses_run{i}.npy", np.array(val_losses))
         all_train_losses.append(train_losses)
         all_val_losses.append(val_losses)
         logging.info("Run %d — %d epochs  train_loss=%.4f  val_loss=%.4f",
@@ -291,12 +297,21 @@ def main():
         # --- Evaluation ---
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         cnn = Model.load_cnn(str(save_path / model_filename), device)
-        preds = batch_predict(cnn, X_test, batch_size=arch["batch_size"])
-        del cnn
 
-        f1 = f1_score(Y_test, preds, average="macro")
-        logging.info("Run %d — F1-score (macro) = %.4f", i, f1)
+        result_dataset = evaluation.run(cnn, test_type="testing_dataset")
+        f1 = result_dataset[0]
+        logging.info("Run %d — F1-score (testing_dataset) = %.4f", i, f1)
         f1_scores.append(f1)
+
+        result_full = evaluation.run(cnn, test_type="entire_files", preprocessing_arg=True)
+        f1_full, _, _, precision, recall = result_full
+        logging.info("Run %d — F1-score (entire_files) = %.4f  precision=%.4f  recall=%.4f",
+                     i, f1_full, precision, recall)
+        f1_scores_full.append(f1_full)
+        precision_scores.append(precision)
+        recall_scores.append(recall)
+
+        del cnn
 
     # --- Summary ---
     save_summary_loss_plot(
@@ -307,7 +322,10 @@ def main():
 
     df = pd.DataFrame({
         "run": range(args.n_runs),
-        "f1_score": f1_scores,
+        "f1_score_dataset": f1_scores,
+        "f1_score_full": f1_scores_full,
+        "precision_full": precision_scores,
+        "recall_full": recall_scores,
         "train_loss_final": [tl[-1] for tl in all_train_losses],
         "val_loss_final": [vl[-1] for vl in all_val_losses],
         "n_epochs": [len(tl) for tl in all_train_losses],
@@ -315,7 +333,8 @@ def main():
     csv_path = save_path / f"{config.data.positive_class}_{tag}_results.csv"
     df.to_csv(csv_path, index=False)
 
-    logging.info("F1-score  mean=%.4f  std=%.4f", np.mean(f1_scores), np.std(f1_scores))
+    logging.info("F1-score (testing_dataset) mean=%.4f  std=%.4f", np.mean(f1_scores), np.std(f1_scores))
+    logging.info("F1-score (entire_files)    mean=%.4f  std=%.4f", np.mean(f1_scores_full), np.std(f1_scores_full))
     logging.info("Results saved to: %s", save_path)
 
 
