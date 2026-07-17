@@ -22,19 +22,19 @@ species = "thyolo"
 # automatically below; you don't need to list it here).
 jobs = {
     #"mp3":  ["32k", "56k", "96k"],
-    "opus": ["8k", "48k", "112k"],
-    "aac":  ["8k", "40k", "96k"],
-    "ogg":  ["0", "4", "8"],
-    "flac": ["0", "2", "8"],
-    # "cs":   ["0.1", "0.15", "0.3"],
+    #"opus": ["8k", "48k", "112k"],
+    #"aac":  ["8k", "40k", "96k"],
+    #"ogg":  ["0", "4", "8"],
+    #"flac": ["0", "2", "8"],
+     "cs":   ["0.1", "0.2", "0.3"],
 }
 
-print(f"=== baseline (no compression) ===")
-subprocess.run([
-    sys.executable,
-    "scripts/run_creation_dataset.py",
-    "--species", species,
-], check=False)
+#print(f"=== baseline (no compression) ===")
+#subprocess.run([
+#    sys.executable,
+#    "scripts/run_creation_dataset.py",
+#    "--species", species,
+#], check=False)
 
 for method, params in jobs.items():
     for param in params:

@@ -52,7 +52,7 @@ SPECIES_ARCH = {
     "thyolo": dict(
         conv_layers=2, fc_layers=2, conv_kernel=8, conv_filters=16,
         dropout_rate=0.3, fc_units=64, max_pooling_size=2,
-        learning_rate=0.001, num_epochs=50, batch_size=64,
+        learning_rate=0.0001, num_epochs=50, batch_size=64,
     ),
     "ptw": dict(
         conv_layers=1, fc_layers=2, conv_kernel=8, conv_filters=16,
