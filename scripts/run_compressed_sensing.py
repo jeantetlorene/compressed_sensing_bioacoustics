@@ -201,9 +201,9 @@ def main():
     status = "crashed"
     try:
         if args.mode == "compression":
-            cs.compress_folder_legacy()
+            cs.compress()
         else:
-            cs.reconstruction_legacy(solver=args.solver, alpha=args.alpha,
+            cs.reconstruction(solver=args.solver, alpha=args.alpha,
                                      saved_in_wav=args.save_wav)
         status = "completed"
     finally:
