@@ -191,6 +191,7 @@ class CS:
         lam=1e-4,
         max_iter=150,
         tol=1e-5,
+        n_workers=-1,
         debias=True,
     ):
         """Batched FISTA (Nesterov-accelerated proximal gradient) for L1-penalized CS.
@@ -217,7 +218,7 @@ class CS:
 
         for _ in range(max_iter):
             # Gradient: A^T(Az - y) via implicit DCT operators
-            residual = idct(z, norm="ortho", axis=1)[:, idx] - y_batch
+            residual = idct(z, norm="ortho", axis=1, workers=n_workers)[:, idx] - y_batch
             padded = np.zeros_like(z)
             padded[:, idx] = residual
             grad = dct(padded, norm="ortho", axis=1)
@@ -367,7 +368,7 @@ class CS:
 
         return out
 
-    def compress_one_file(self, audio, sample_rate, idx, file_name_no_extension):
+    def compress_one_file_legacy(self, audio, sample_rate, idx, file_name_no_extension):
         cs_compressed_data = []
         audio_windows = self.segment_audio_sliding_window(audio)
 
@@ -383,20 +384,35 @@ class CS:
         return cs_compressed_data
 
 
-    def compress_folder(self):
+    def compress_one_file(self, audio, sample_rate, idx, file_name_no_extension):
+        audio_windows = self.segment_audio_sliding_window(audio)
+        compressed_batches = []
+
+        for start in tqdm(range(0, audio_windows.shape[0], self.batch_size), desc="Compressing audio segments", unit="batch"):
+            batch = audio_windows[start:start + self.batch_size]
+            compressed_batches.append(batch[:, idx].astype(np.float32, copy=False))
+
+        compressed_frames = np.concatenate(compressed_batches, axis=0)
+
+        file_name = Path(self.folder_compressed_saved, f"{file_name_no_extension}_{compressed_frames.shape[0]}_compressed.npy")
+        np.save(file_name, compressed_frames.reshape(-1))
+
+        return compressed_frames
+
+    def compress_folder_legacy(self):
         timing=[]
         files=[f for f in os.listdir(self.folder_audio) if f.endswith(".wav") or f.endswith(".WAV")]
         
         idx=self.compress_matrix_1D()
 
         for file in files :
-            logger.info("Compressing : %s", file)
+            logger.info("Compressing (legacy): %s", file)
             timing.append(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-5])
 
             file_name_no_extension=file[:-4]
             audio, sample_rate = librosa.load(Path(self.folder_audio, file),sr=None)
   
-            self.compress_one_file(audio, sample_rate, idx, file_name_no_extension)
+            self.compress_one_file_legacy(audio, sample_rate, idx, file_name_no_extension)
         
         file_name=f"{self.folder_compressed_saved}/idx_matrix.pkl"
         with open(file_name, "wb") as f:
@@ -404,8 +420,34 @@ class CS:
 
         return timing
 
+    def compress_folder(self):
+        timing=[]
+        files=[f for f in os.listdir(self.folder_audio) if f.endswith(".wav") or f.endswith(".WAV")]
+        
+        #generate the fixed compression matrix : 
+        idx=self.compress_matrix_1D()
 
-    def reconstruction(self, solver="lasso", alpha=1e-8, saved_in_wav=False):
+
+        for file in files :
+            logger.info("Compressing: %s", file)
+            timing.append(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-5])
+
+            file_name_no_extension=file[:-4]
+
+            #open the file
+            audio, sample_rate = librosa.load(Path(self.folder_audio, file),sr=None)
+
+            self.compress_one_file(audio, sample_rate, idx, file_name_no_extension)
+
+        #save the compression matrix
+        logger.info("Saving measurement matrix")
+        file_name=f"{self.folder_compressed_saved}/idx_matrix.pkl"
+        with open(file_name, "wb") as f:
+                pickle.dump(idx, f) 
+
+        return timing
+
+    def reconstruction_legacy(self, solver="lasso", alpha=1e-8, saved_in_wav=False):
         timing=[]
         files=[f for f in os.listdir(self.folder_compressed_saved) if f.endswith(".wav") and f != "idx_matrix.pkl"]
         
@@ -415,7 +457,7 @@ class CS:
         A = self.csmtx_dct(self.frame_size, idx)
 
         for file in files :
-            logger.info("Reconstructing: %s", file)
+            logger.info("Reconstructing (legacy): %s", file)
             timing.append(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-5])
 
             file_name_no_extension=file[:-15]
@@ -447,6 +489,96 @@ class CS:
         return timing
 
 
+    def reconstruction(self, solver="iht", alpha=1e-4, saved_in_wav=False, max_iter=200, n_workers=-1,  sparsity=None, lam=None):
+        timing=[]
+        files = [
+            f
+            for f in os.listdir(self.folder_compressed_saved)
+            if (
+                (f.endswith(".npy") or f.endswith(".wav"))
+                and f != "idx_matrix.pkl"
+                and "_compressed" in f
+            )
+        ]
+        
+        #open idx matrice
+        with open(Path(self.folder_compressed_saved, "idx_matrix.pkl"), "rb") as f:
+               idx = pickle.load(f)
+        
+        
+        for file in files :
+            logger.info("Reconstructing: %s", file)
+            timing.append(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-5])
+            if file.endswith("_compressed.npy"):
+                file_name_no_extension = file[: -len("_compressed.npy")]
+            else:
+                file_name_no_extension = file[: -len("_compressed.wav")]
 
+            nb_windows = int(file_name_no_extension.split("_")[-1])
+            file_stem = file_name_no_extension.rsplit("_", 1)[0]
+
+            file_path = Path(self.folder_compressed_saved, file)
+            if file.endswith(".npy"):
+                compressed_file = np.load(file_path).astype(np.float32, copy=False)
+            else:
+                compressed_file_int16, _ = sf.read(file_path, dtype="int16")
+                compressed_file = compressed_file_int16.astype(np.float32) / 32767.0
+                del compressed_file_int16
+
+            loaded_list = compressed_file.reshape((nb_windows, len(idx)))
+
+            if solver == "iht":
+                reconstructed_batches = []
+                for start in tqdm(range(0, loaded_list.shape[0], self.batch_size), desc="Reconstructing audio segments", unit="batch"):
+                    batch = loaded_list[start:start + self.batch_size]
+                    reconstructed_batches.append(
+                        self._iht_reconstruction_batch(
+                            batch,
+                            idx,
+                            sparsity=sparsity,
+                            max_iter=max_iter,
+                            tol=alpha if alpha is not None else 1e-4,
+                            debias=True,
+                        )
+                    )
+                reconstructed_frames = np.concatenate(reconstructed_batches, axis=0)
+            elif solver == "fista":
+                if lam is None:
+                    lam = alpha * len(idx)   # alpha->lam scaling, see earlier explanation
+                reconstructed_batches = []
+                for start in tqdm(range(0, loaded_list.shape[0], self.batch_size), desc="Reconstructing (FISTA)", unit="batch"):
+                    batch = loaded_list[start:start + self.batch_size]
+                    reconstructed_batches.append(
+                        self._fista_reconstruction_batch(
+                            batch, idx, lam=lam, max_iter=max_iter,
+                            tol=1e-5, n_workers=n_workers, debias=True,
+                        )
+                    )
+                reconstructed_frames = np.concatenate(reconstructed_batches, axis=0)
+            else:
+                A = self.csmtx_dct(self.frame_size, idx)
+                reconstructed_frames = np.asarray(
+                    Parallel(n_jobs=self.n_jobs)(
+                        delayed(self.reconstruct_frame)(y, solver, alpha, A) for y in tqdm(loaded_list)
+                    ),
+                    dtype=np.float32,
+                )
+
+            reconstructed_signal = self.overlap_add(reconstructed_frames, window=self.analysis_window)
+
+    
+                
+            
+            #save numpy file 
+            if saved_in_wav==True : 
+                audio_int16 = np.int16(np.clip(reconstructed_signal, -1.0, 1.0) * 32767)
+                write(Path(self.folder_reconstructed_saved, file_stem+"_reconstructed.wav"), self.sample_rate, audio_int16)
+                saved_name = f"{file_stem}_reconstructed.wav"
+            else : 
+                np.save(Path(self.folder_reconstructed_saved, file_stem+"_reconstructed.npy"), reconstructed_signal.astype(np.float32, copy=False))
+                saved_name = f"{file_stem}_reconstructed.npy"
+            logger.info("File saved: %s", saved_name)
+
+        return timing
 
 

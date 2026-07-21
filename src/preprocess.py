@@ -136,26 +136,27 @@ class Preprocessing:
             audio_path=Path(self.audio_path, file_name+self.audio_extension)
         
         elif method_compression=="cs": 
-            self.compressed_audio_path = Path(self.species_folder, "Compressed_Audio", f"cs_reconstructed_{parameter_compression}")
-            print(self.compressed_audio_path)
-            # Find file that matches pattern "{file_name}_*_reconstructed.pkl"
-            matches =list(glob(f"{self.compressed_audio_path}/{file_name}_*.npy"))
-            if not matches:
-                raise FileNotFoundError(f"No reconstructed file found for {file_name}")
-            if len(matches) > 1:
-                raise ValueError(f"Multiple reconstructed files found for {file_name}: {matches}")
-
-            audio_path = matches[0]
+             
+            folder_path = Path(self.species_folder) / "Compressed_Audio" / f"{method_compression}_reconstructed_{parameter_compression}"
+            audio_path = folder_path / f"{file_name}_reconstructed{self.audio_extension}"
+            if not audio_path.exists():
+                raise FileNotFoundError(f"No file found for exact stem '{file_name}' in {folder_path}")
+    
         else: 
             self.compressed_audio_path = Path(self.species_folder, "Compressed_Audio", f"{method_compression}_{parameter_compression}")
             audio_path=Path(self.compressed_audio_path)/ f"{file_name}_{method_compression}_{parameter_compression}.{method_compression}"
+             
+        
         
         # Read the amplitudes and sample rate     
-        if method_compression=="cs":
-            audio_amps=np.load(audio_path) 
-            audio_sample_rate= self.original_sample_rate 
+        if method_compression=="cs" and self.audio_extension==".wav":
+            audio_amps, audio_sample_rate = librosa.load(audio_path, sr=None)
+        
+        elif method_compression=="cs" and self.audio_extension==".npy":
+            audio_amps = np.load(audio_path)
+            audio_sample_rate=self.original_sample_rate
 
-        elif method_compression==None : 
+        elif method_compression is None : 
             audio_amps, audio_sample_rate = librosa.load(audio_path, sr=None)
 
         else :   
@@ -573,28 +574,8 @@ class Preprocessing:
                 )
         
     
-            # Read audio file
-            if self.audio_extension==".npy":
-                original_sample_rate = self.original_sample_rate
-                #Construct the folder path
-                folder_path = Path(self.species_folder) / "Compressed_Audio" / f"{method_compression}_reconstructed_{parameter_compression}"
-
-                # Search for the file using glob
-                matching_files = list(folder_path.glob(f"{file_name_no_extension}_*.npy"))
-
-                # Filter to select the one ending with the exact suffix
-                pattern = re.compile(re.escape(file_name_no_extension) + r"(_\d+)?_reconstructed\.npy$")
-
-                # Filter files with the correct ending
-                filtered_files = [f for f in matching_files if pattern.fullmatch(f.name)]
-
-                if filtered_files:
-                    file_path = filtered_files[0]
-                    audio_amps = np.load(file_path)
-                else:
-                    raise FileNotFoundError(f"No file found for pattern: {file_name_no_extension}_*.npy in {folder_path}")
-            else : 
-                audio_amps, original_sample_rate = self.read_audio_file(file_name_no_extension, method_compression, parameter_compression) 
+ 
+            audio_amps, original_sample_rate = self.read_audio_file(file_name_no_extension, method_compression, parameter_compression) 
                         
     
             #print ("sampling rate : ", original_sample_rate ) 
