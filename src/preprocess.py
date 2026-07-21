@@ -135,12 +135,40 @@ class Preprocessing:
         if method_compression is None:
             audio_path=Path(self.audio_path, file_name+self.audio_extension)
         
-        elif method_compression=="cs": 
+        elif method_compression=="cs" and self.audio_extension==".npy": 
              
-            folder_path = Path(self.species_folder) / "Compressed_Audio" / f"{method_compression}_reconstructed_{parameter_compression}"
-            audio_path = folder_path / f"{file_name}_reconstructed{self.audio_extension}"
-            if not audio_path.exists():
-                raise FileNotFoundError(f"No file found for exact stem '{file_name}' in {folder_path}")
+            self.compressed_audio_path = Path(self.species_folder, "Compressed_Audio", f"cs_reconstructed_{parameter_compression}")
+            
+            # Find file that matches pattern "{file_name}_*_reconstructed.pkl"
+            matches =list(glob(f"{self.compressed_audio_path}/{file_name}_*.npy"))
+            
+            # Filter to select the one ending with the exact suffix
+            pattern = re.compile(re.escape(file_name) + r"_\d+_reconstructed\.npy$")
+
+            # Filter files with the correct ending
+            filtered_files = [f for f in matches if pattern.fullmatch(Path(f).name)]
+            if filtered_files: 
+                audio_path = filtered_files[0]
+            else:
+                raise FileNotFoundError(f"No file found for pattern: {file_name}_*.npy in {self.compressed_audio_path}")
+
+        
+        elif method_compression=="cs" and self.audio_extension==".wav": 
+             
+            self.compressed_audio_path = Path(self.species_folder, "Compressed_Audio", f"cs_reconstructed_{parameter_compression}")
+            
+            # Find file that matches pattern "{file_name}_*_reconstructed.pkl"
+            matches =list(glob(f"{self.compressed_audio_path}/{file_name}_*.wav"))
+            
+            # Filter to select the one ending with the exact suffix
+            pattern = re.compile(re.escape(file_name) + r"_\d+_reconstructed\.wav$")
+
+            # Filter files with the correct ending
+            filtered_files = [f for f in matches if pattern.fullmatch(Path(f).name)]
+            if filtered_files: 
+                audio_path = filtered_files[0]
+            else:
+                raise FileNotFoundError(f"No file found for pattern: {file_name}_*.wav in {self.compressed_audio_path}")
     
         else: 
             self.compressed_audio_path = Path(self.species_folder, "Compressed_Audio", f"{method_compression}_{parameter_compression}")
