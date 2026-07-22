@@ -72,17 +72,17 @@ def parse_args():
     # Paths
     parser.add_argument(
         "--folder-audio",
-        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Bats/Audio",
+        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Gibbon/Audio",
         help="Folder containing raw .wav files.",
     )
     parser.add_argument(
         "--folder-saved",
-        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Bats/Compressed_Audio",
+        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Gibbon/Compressed_Audio",
         help="Root output folder (sub-folders are created automatically).",
     )
     parser.add_argument(
         "--folder-tracking",
-        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Bats/tracking",
+        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Gibbon/tracking",
         help="Folder where execution-time logs are written.",
     )
 
@@ -110,7 +110,7 @@ def parse_args():
     # Reconstruction-only options
     parser.add_argument("--alpha", type=float, default=1e-7,
                         help="Regularisation / tolerance parameter for reconstruction.")
-    parser.add_argument("--max-iter", type=int, default=200,
+    parser.add_argument("--max-iter", type=int, default=500,
                         help="Maximum solver iterations (reconstruction only).")
     parser.add_argument("--solver", choices=["iht", "lasso", "omp"], default="lasso",
                         help="Reconstruction solver (used only with --mode reconstruction).")
@@ -201,7 +201,7 @@ def main():
     status = "crashed"
     try:
         if args.mode == "compression":
-            cs.compress()
+            cs.compress_folder()
         else:
             cs.reconstruction(solver=args.solver, alpha=args.alpha,
                                      saved_in_wav=args.save_wav)
