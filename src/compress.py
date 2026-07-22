@@ -120,6 +120,12 @@ class CS:
     
     def compress_1D(self, X , idx):
         return np.array(X)[idx]
+    
+    def _get_hop_size(self):
+        hop = int(round(self.frame_size * (1 - self.overlap)))
+        if hop <= 0:
+            raise ValueError("overlap is too large and produces a non-positive hop size.")
+        return hop
 
 
     # Function to reconstruct a single frame of a segment in a audio
