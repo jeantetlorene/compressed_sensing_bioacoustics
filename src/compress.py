@@ -8,6 +8,7 @@ from joblib import Parallel, delayed
 import librosa
 import numpy as np
 import soundfile as sf
+from scipy.signal.windows import tukey
 from pydub import AudioSegment
 from scipy.fft import dct, idct
 from scipy.io.wavfile import write
@@ -59,7 +60,7 @@ class Compression:
         return timing
 
 class CS: 
-    def __init__(self, folder_audio, folder_saved, sample_rate, frame_size, overlap, compression_rate=0.15, seed=42, n_jobs=-1):
+    def __init__(self, folder_audio, folder_saved, sample_rate, frame_size, overlap, compression_rate=0.15, seed=42, n_jobs=-1, window_type="hann"):
         
         #folders
         self.folder_audio=folder_audio
@@ -76,15 +77,14 @@ class CS:
         self.sample_rate=sample_rate
         self.frame_size=frame_size #in seconds
         self.overlap=overlap #percentage 
+        self.window_type=window_type
 
         #parameters compression/reconstruction
         self.compression_rate=compression_rate
         self.seed=seed
         self.n_jobs=n_jobs
         self.batch_size = 256
-        self.analysis_window = np.sqrt(np.hanning(self.frame_size)).astype(np.float32)
-        if not np.any(self.analysis_window):
-            self.analysis_window = np.ones(self.frame_size, dtype=np.float32)
+
 
 
     def csmtx_dct(self, N, idx):
@@ -108,6 +108,22 @@ class CS:
                 valid_frames.append((window_frame, num_segments))
 
         return valid_frames
+
+    def get_window(self):
+
+        if self.window_type == "rect":
+            return np.ones(self.frame_size)
+
+        elif self.window_type == "hann":
+            return np.hanning(self.frame_size)
+        elif self.window_type == "tukey":
+            return tukey(self.frame_size,
+                        alpha=0.5)
+
+        else:
+            raise ValueError(
+                f"Unknown window : {self.window_type}"
+            )
 
 
     # Function to compress the 1D-signal
@@ -178,7 +194,7 @@ class CS:
         """
 
         hop = self._get_hop_size()
-        frames = np.asarray(frames, dtype=np.float32)
+        frames = np.asarray(frames, dtype=np.float64)
         num_frames = frames.shape[0]
         # output length: last start + N
         out_len = hop * (num_frames - 1) + self.frame_size
@@ -186,9 +202,9 @@ class CS:
         weight = np.zeros(out_len, dtype=np.float64)
 
         if window is None:
-            w = np.ones(self.frame_size, dtype=np.float32)
+            w = np.ones(self.frame_size, dtype=np.float64)
         else:
-            w = np.asarray(window, dtype=np.float32)
+            w = np.asarray(window, dtype=np.float64)
             assert w.shape[0] == self.frame_size
 
         for i in range(num_frames):
@@ -270,7 +286,8 @@ class CS:
                     )
 
 
-            window = np.hanning(self.frame_size)
+            #window = np.hanning(self.frame_size)
+            window=self.get_window()
             reconstructed_signal = self.overlap_add(reconstructed_frames, window=window)
 
             if saved_in_wav==True : 
