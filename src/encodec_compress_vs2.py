@@ -1,11 +1,12 @@
 
 import datetime
 import os
+import time
 import gc
 from pathlib import Path
-
+import soundfile as sf
 import torch
-import torchaudio
+#import torchaudio
 from encodec import EncodecModel
 from encodec.utils import convert_audio
 
@@ -145,14 +146,22 @@ class EncodecCompression:
                 print("Already compressed.")
                 continue
 
-            wav, sr = torchaudio.load(file_input)
+            #wav, sr = torchaudio.load(file_input)
 
+            t0 = time.time()
+            wav, sr = sf.read(file_input, always_2d=True)
+            wav = torch.from_numpy(wav.T).float()
+            print("Load:", time.time() - t0)
+
+
+            t0 = time.time()
             wav = convert_audio(
                 wav,
                 sr,
                 self.model.sample_rate,
                 self.model.channels,
             )
+            print("Convert:", time.time() - t0)
 
             wav = wav.unsqueeze(0)
 
@@ -170,7 +179,7 @@ class EncodecCompression:
                 },
                 metadata_file,
             )
-
+            t0 = time.time()
             with torch.inference_mode():
 
                 for block_idx, block_start in enumerate(
@@ -226,10 +235,15 @@ class EncodecCompression:
                         / f"block_{block_idx:03d}.pt"
                     )
 
+                    print("Encode:", time.time() - t0)
+
+
+                    t0 = time.time()
                     torch.save(
                         latents,
                         block_file,
                     )
+                    print("Save:", time.time() - t0)
 
                     del latents
                     gc.collect()
@@ -325,9 +339,9 @@ class EncodecCompression:
 
                     gc.collect()
 
-            torchaudio.save(
+            sf.write(
                 file_output,
-                reconstructed.squeeze(0),
+                reconstructed.squeeze(0).T.cpu().numpy(),
                 self.model.sample_rate,
             )
 
