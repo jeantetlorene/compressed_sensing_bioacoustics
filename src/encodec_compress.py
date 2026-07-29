@@ -65,8 +65,14 @@ class EncodecCompression:
             overlap_add_weights = torch.zeros_like(wav)
             
             # Hanning window for smooth overlap-add
-            window = torch.hann_window(chunk_length).to('cpu')
+            #window = torch.hann_window(chunk_length).to('cpu')
             
+            # use triangular window as Meta to reconstruct the signal
+            t = torch.linspace(0, 1, chunk_length + 2, device='cpu', dtype=wav.dtype
+            )[1:-1]
+
+            window = 0.5 - (t - 0.5).abs()
+
             all_latents = []
 
             # Process chunks
