@@ -117,22 +117,31 @@ class EncodecCompression:
 
         step = chunk_length - overlap
 
+        block_size = int(
+            self.block_duration_sec * self.model.sample_rate
+        )
+
         for file in self.files:
 
             timing.append(
                 datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-5]
             )
 
-            print("Compressing:", file)
+            print(f"\nCompressing: {file}")
 
             file_input = self.folder_audio / file
 
-            file_latent = (
+            recording_folder = (
                 self.latent_folder
-                / f"{file[:-4]}_{self.method_compression}_{self.parameter_compression}.pt"
+                / f"{file[:-4]}_{self.method_compression}_{self.parameter_compression}"
             )
 
-            if file_latent.exists():
+            recording_folder.mkdir(parents=True, exist_ok=True)
+
+            metadata_file = recording_folder / "metadata.pt"
+
+            # Skip if metadata already exists
+            if metadata_file.exists():
                 print("Already compressed.")
                 continue
 
@@ -149,45 +158,83 @@ class EncodecCompression:
 
             total_length = wav.shape[-1]
 
-            latents = []
+            # Save metadata once
+            torch.save(
+                {
+                    "length": total_length,
+                    "sample_rate": self.model.sample_rate,
+                    "original_sample_rate": sr,
+                    "chunk_length": chunk_length,
+                    "step": step,
+                    "block_size": block_size,
+                },
+                metadata_file,
+            )
 
             with torch.inference_mode():
 
-                for start in range(0, total_length, step):
+                for block_idx, block_start in enumerate(
+                    range(0, total_length, block_size)
+                ):
 
-                    end = min(start + chunk_length, total_length)
-
-                    chunk = wav[:, :, start:end]
-
-                    pad = chunk_length - chunk.shape[-1]
-
-                    if pad > 0:
-                        chunk = torch.nn.functional.pad(chunk, (0, pad))
-
-                    encoded = self.model.encode(chunk)
-
-                    # save only the encoded frame
-                    codes, scale = encoded[0]
-
-                    latents.append(
-                        (
-                            codes.cpu(),
-                            scale.cpu() if scale is not None else None,
-                        )
+                    block_end = min(
+                        block_start + block_size,
+                        total_length,
                     )
 
-            torch.save(
-                {
-                    "latents": latents,
-                    "length": total_length,
-                    "sample_rate": self.model.sample_rate,   # 24 kHz after conversion
-                    "original_sample_rate": sr,              # original WAV sampling rate
-                    "chunk_length": chunk_length,
-                    "step": step,
-                },
-                file_latent,
-            )
+                    print(
+                        f"  Block {block_idx + 1}: "
+                        f"{block_start/self.model.sample_rate:.1f}s "
+                        f"-> "
+                        f"{block_end/self.model.sample_rate:.1f}s"
+                    )
 
+                    block = wav[:, :, block_start:block_end]
+
+                    latents = []
+
+                    for start in range(0, block.shape[-1], step):
+
+                        end = min(
+                            start + chunk_length,
+                            block.shape[-1],
+                        )
+
+                        chunk = block[:, :, start:end]
+
+                        pad = chunk_length - chunk.shape[-1]
+
+                        if pad > 0:
+                            chunk = torch.nn.functional.pad(
+                                chunk,
+                                (0, pad),
+                            )
+
+                        encoded = self.model.encode(chunk)
+
+                        codes, scale = encoded[0]
+
+                        latents.append(
+                            (
+                                codes.cpu(),
+                                scale.cpu() if scale is not None else None,
+                            )
+                        )
+
+                    block_file = (
+                        recording_folder
+                        / f"block_{block_idx:03d}.pt"
+                    )
+
+                    torch.save(
+                        latents,
+                        block_file,
+                    )
+
+                    del latents
+                    gc.collect()
+
+            del wav
             gc.collect()
 
         return timing
@@ -200,12 +247,14 @@ class EncodecCompression:
 
         for file in self.files:
 
-            print("Reconstructing:", file)
+            print(f"\nReconstructing: {file}")
 
-            file_latent = (
+            recording_folder = (
                 self.latent_folder
-                / f"{file[:-4]}_{self.method_compression}_{self.parameter_compression}.pt"
+                / f"{file[:-4]}_{self.method_compression}_{self.parameter_compression}"
             )
+
+            metadata_file = recording_folder / "metadata.pt"
 
             file_output = (
                 self.compression_folder
@@ -216,30 +265,65 @@ class EncodecCompression:
                 print("Already reconstructed.")
                 continue
 
-            saved = torch.load(file_latent)
-            chunk_length = saved["chunk_length"]
-            step = saved["step"]
+            if not metadata_file.exists():
+                print("Metadata not found.")
+                continue
 
-            latents = saved["latents"]
-            total_length = saved["length"]
+            metadata = torch.load(metadata_file)
 
-            decoded_chunks = []
+            total_length = metadata["length"]
+            chunk_length = metadata["chunk_length"]
+            step = metadata["step"]
+            block_size = metadata["block_size"]
+
+            reconstructed = torch.zeros(
+                (1, self.model.channels, total_length),
+                dtype=torch.float32,
+            )
 
             with torch.inference_mode():
 
-                for latent in latents:
+                block_files = sorted(recording_folder.glob("block_*.pt"))
 
-                    decoded = self.model.decode([latent])
+                for block_idx, block_file in enumerate(block_files):
 
-                    decoded_chunks.append(decoded)
+                    print(f"  Block {block_idx+1}/{len(block_files)}")
 
-            reconstructed = self._overlap_add(
-                decoded_chunks,
-                total_length,
-                chunk_length,
-                step,
-                decoded_chunks[0].dtype,
-            )
+                    latents = torch.load(block_file)
+
+                    decoded_chunks = []
+
+                    for latent in latents:
+
+                        decoded = self.model.decode([latent])
+
+                        decoded_chunks.append(decoded)
+
+                    block_length = min(
+                        block_size,
+                        total_length - block_idx * block_size,
+                    )
+
+                    reconstructed_block = self._overlap_add(
+                        decoded_chunks,
+                        block_length,
+                        chunk_length,
+                        step,
+                        decoded_chunks[0].dtype,
+                    )
+
+                    start = block_idx * block_size
+                    end = start + block_length
+
+                    reconstructed[:, :, start:end] = reconstructed_block[
+                        :, :, :block_length
+                    ]
+
+                    del latents
+                    del decoded_chunks
+                    del reconstructed_block
+
+                    gc.collect()
 
             torchaudio.save(
                 file_output,
@@ -247,4 +331,5 @@ class EncodecCompression:
                 self.model.sample_rate,
             )
 
+            del reconstructed
             gc.collect()
