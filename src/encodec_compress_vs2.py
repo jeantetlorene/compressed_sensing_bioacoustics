@@ -5,6 +5,7 @@ import time
 import gc
 from pathlib import Path
 import soundfile as sf
+import numpy as np
 import torch
 #import torchaudio
 import pprint
@@ -107,9 +108,6 @@ class EncodecCompression:
             wav, sr = sf.read(file_input, always_2d=True)
             wav = torch.from_numpy(wav.T).float()
          
-
-
-       
             wav = convert_audio(
                 wav,
                 sr,
@@ -158,24 +156,32 @@ class EncodecCompression:
                     # ORIGINAL ENCODEC
                     ##############################################################
                     if self.window_duration_sec is None:
-                        encoded = self.model.encode(block)
-            
-                        encoded = [
-                            (
-                                codes.cpu(),
-                                scale.cpu() if scale is not None else None,
-                            )
-                            for codes, scale in encoded
-                        ]
+                        codes, scale = self.model.encode(block)[0]
 
-              
+                        codes = codes.cpu().numpy().astype(np.uint16)
+
+                        if scale is not None:
+                            np.save(
+                                recording_folder / f"block_{block_idx:03d}_scale.npy",
+                                scale.cpu().numpy(),
+                                allow_pickle=False,
+                            )
+                   
+        
+
+                        np.save(
+                            recording_folder / f"block_{block_idx:03d}_codes.npy",
+                            codes,
+                            allow_pickle=False,
+                        )
+
+                
                         torch.save(
                             {
                                 "window_size": None,
                                 "num_windows": 1,
-                                "latents": encoded,
                             },
-                            recording_folder / f"block_{block_idx:03d}.pt",
+                            recording_folder / f"block_{block_idx:03d}_meta.pt",
                         )
 
                     
@@ -229,7 +235,7 @@ class EncodecCompression:
                         # Encode batches
                         ##########################################################
 
-                        batched_latents = []
+                        num_batches = 0 
 
                         for i in range(
                             0,
@@ -241,36 +247,48 @@ class EncodecCompression:
                                 i:i+self.batch_size
                             ]
 
-                            encoded = self.model.encode(batch)
+                            codes, scale = self.model.encode(batch)[0]
+                            
+                            
+                            codes = codes.cpu().numpy().astype(np.uint16)
 
-                            encoded = [
-                                (
-                                    codes.cpu(),
-                                    scale.cpu() if scale is not None else None,
+
+                           
+
+                            ##########################################################
+                            # Save
+                            ##########################################################
+                            # Save codes
+                            np.save(
+                                recording_folder / f"block_{block_idx:03d}_batch_{num_batches:04d}_codes.npy",
+                                codes,
+                                allow_pickle=False,
+                            )
+
+                            if scale is not None:
+                                np.save(
+                                    recording_folder /
+                                    f"block_{block_idx:03d}_batch_{num_batches:04d}_scale.npy",
+                                    scale.cpu().numpy(),
+                                    allow_pickle=False,
                                 )
-                                for codes, scale in encoded
-                            ]
 
-                            batched_latents.append(encoded)
+                            num_batches += 1
 
-                        ##########################################################
-                        # Save
-                        ##########################################################
 
                         torch.save(
                             {
                                 "window_size": window_size,
                                 "num_windows": windows.shape[0],
                                 "valid_length": block.shape[-1],
-                                "latents": batched_latents,
+                                "num_batches": num_batches,
                             },
-                            recording_folder / f"block_{block_idx:03d}.pt",
+                            recording_folder / f"block_{block_idx:03d}_meta.pt",
                         )
 
                         del windows
-                        del batched_latents
+                 
 
-                    del encoded
                     del block
                     gc.collect()
 
@@ -316,7 +334,7 @@ class EncodecCompression:
             original_sr = metadata["original_sample_rate"]
             
 
-            block_files = sorted(recording_folder.glob("block_*.pt"))
+            block_files = sorted(recording_folder.glob("block_*_meta.pt"))
 
 
             with sf.SoundFile(
@@ -330,38 +348,37 @@ class EncodecCompression:
                 t1 = time.time()
 
                 with torch.inference_mode():
-
                     for block_idx, block_file in enumerate(block_files):
 
-                        #print(f"  Block {block_idx+1}/{len(block_files)}")
-
-
+                        prefix = block_file.stem.replace("_meta", "")
                         saved = torch.load(block_file)
+
                         window_size = saved["window_size"]
-                        num_windows = saved["num_windows"]
-                        batched_latents = saved["latents"]
-
-                        saved = torch.load(block_file)
-
-                        codes = saved["latents"][0][0][0]
-
-                        print(codes.dtype)
-                        print(codes.shape)
-                        print(codes.min(), codes.max())
-                        print(codes.numel())
-                        print(codes.element_size())
-                        print("Tensor size:", codes.numel()*codes.element_size()/1024**2, "MB")
-
-
 
                         ###################################################
                         # ORIGINAL ENCODEC MODE
                         ###################################################
-
                         if window_size is None:
 
+                            codes = torch.from_numpy(
+                                np.load(
+                                    recording_folder /
+                                    f"{prefix}_codes.npy"
+                                )
+                            ).to(torch.int64)
+
+                            scale_file = (
+                                recording_folder /
+                                f"{prefix}_scale.npy"
+                            )
+
+                            if scale_file.exists():
+                                scale = torch.from_numpy(np.load(scale_file)).float()
+                            else:
+                                scale = None
+
                             decoded = self.model.decode(
-                                batched_latents
+                                [(codes, scale)]
                             )
 
                             audio = (
@@ -373,22 +390,42 @@ class EncodecCompression:
                             outfile.write(audio)
 
                             del decoded
+                            del codes
 
                         ###################################################
                         # WINDOWED / BATCHED MODE
                         ###################################################
-
                         else:
 
                             decoded_windows = []
 
-                            for batch in batched_latents:
+                            for batch_idx in range(saved["num_batches"]):
 
-                                decoded = self.model.decode(batch)
+                                codes = torch.from_numpy(
+                                    np.load(
+                                        recording_folder /
+                                        f"{prefix}_batch_{batch_idx:04d}_codes.npy"
+                                    )
+                                ).to(torch.int64)
+
+                                scale_file = (
+                                    recording_folder /
+                                    f"{prefix}_batch_{batch_idx:04d}_scale.npy"
+                                )
+
+                                if scale_file.exists():
+                                    scale = torch.from_numpy(np.load(scale_file)).float()
+                                else:
+                                    scale = None
+
+                                decoded = self.model.decode(
+                                    [(codes, scale)]
+                                )
 
                                 decoded_windows.append(decoded.cpu())
 
                                 del decoded
+                                del codes
 
                             decoded_windows = torch.cat(
                                 decoded_windows,
@@ -401,12 +438,10 @@ class EncodecCompression:
                             )
 
                             reconstructed = reconstructed[
-                                :num_windows
+                                :saved["num_windows"]
                             ]
 
-                            reconstructed = reconstructed.reshape(
-                                -1
-                            )
+                            reconstructed = reconstructed.reshape(-1)
 
                             audio = reconstructed.numpy()[:saved["valid_length"]]
 
