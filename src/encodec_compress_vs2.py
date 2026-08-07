@@ -17,8 +17,7 @@ class EncodecCompression:
         folder_audio,
         folder_saved,
         parameter_compression="6.0",
-        chunk_length_sec=1.0,
-        overlap_sec=0.010,
+        model_name="24khz",
         block_duration_sec=600,
     ):
 
@@ -31,16 +30,14 @@ class EncodecCompression:
         self.method_compression = "encodec"
         self.parameter_compression = str(parameter_compression)
         self.bandwidth = float(parameter_compression)
-
-        self.chunk_length_sec = chunk_length_sec
-        self.overlap_sec = overlap_sec
+        self.block_duration_sec=block_duration_sec
 
         self.compression_folder = (
             Path(folder_saved)
             / f"{self.method_compression}_{self.parameter_compression}"
         )
         self.compression_folder.mkdir(parents=True, exist_ok=True)
-        self.block_duration_sec=block_duration_sec
+        
 
         self.latent_base_folder = Path(folder_saved).parent / "Compressed_Latents"
         self.latent_folder = (
@@ -49,56 +46,18 @@ class EncodecCompression:
         )
         self.latent_folder.mkdir(parents=True, exist_ok=True)
 
-        self.model = EncodecModel.encodec_model_24khz()
+        self.model_name = model_name
+        if model_name == "24khz":
+            self.model = EncodecModel.encodec_model_24khz()
+        elif model_name == "48khz":
+            self.model = EncodecModel.encodec_model_48khz()
+        else:
+            raise ValueError("model_name must be '24khz' or '48khz'")
+        
         self.model.set_target_bandwidth(self.bandwidth)
         self.model.to("cpu")
         self.model.eval()
 
-    ####################################################################
-    # Helper functions
-    ####################################################################
-
-    def _get_window(self, length, dtype):
-
-        t = torch.linspace(
-            0,
-            1,
-            length + 2,
-            dtype=dtype,
-            device="cpu"
-        )[1:-1]
-
-        return 0.5 - (t - 0.5).abs()
-
-    def _overlap_add(self, decoded_chunks, total_length, chunk_length, step, dtype):
-
-        reconstructed = torch.zeros(
-            (1, self.model.channels, total_length),
-            dtype=dtype
-        )
-
-        weights = torch.zeros_like(reconstructed)
-
-        window = self._get_window(chunk_length, dtype)
-
-        for i, chunk in enumerate(decoded_chunks):
-
-            start = i * step
-            end = min(start + chunk_length, total_length)
-
-            current_length = end - start
-
-            reconstructed[:, :, start:end] += (
-                chunk[:, :, :current_length] * window[:current_length]
-            )
-
-            weights[:, :, start:end] += window[:current_length]
-
-        mask = weights > 1e-12
-        reconstructed[mask] /= weights[mask]
-        reconstructed[~mask] = 0
-
-        return reconstructed
 
     ####################################################################
     # Compression
@@ -107,16 +66,6 @@ class EncodecCompression:
     def compress(self):
 
         timing = []
-
-        chunk_length = int(
-            self.chunk_length_sec * self.model.sample_rate
-        )
-
-        overlap = int(
-            self.overlap_sec * self.model.sample_rate
-        )
-
-        step = chunk_length - overlap
 
         block_size = int(
             self.block_duration_sec * self.model.sample_rate
@@ -148,20 +97,20 @@ class EncodecCompression:
 
             #wav, sr = torchaudio.load(file_input)
 
-            t0 = time.time()
+       
             wav, sr = sf.read(file_input, always_2d=True)
             wav = torch.from_numpy(wav.T).float()
-            print("Load:", time.time() - t0)
+         
 
 
-            t0 = time.time()
+       
             wav = convert_audio(
                 wav,
                 sr,
                 self.model.sample_rate,
                 self.model.channels,
             )
-            print("Convert:", time.time() - t0)
+           
 
             wav = wav.unsqueeze(0)
 
@@ -173,13 +122,11 @@ class EncodecCompression:
                     "length": total_length,
                     "sample_rate": self.model.sample_rate,
                     "original_sample_rate": sr,
-                    "chunk_length": chunk_length,
-                    "step": step,
                     "block_size": block_size,
                 },
                 metadata_file,
             )
-            t0 = time.time()
+            t1 = time.time()
             with torch.inference_mode():
 
                 for block_idx, block_start in enumerate(
@@ -191,65 +138,40 @@ class EncodecCompression:
                         total_length,
                     )
 
-                    print(
-                        f"  Block {block_idx + 1}: "
-                        f"{block_start/self.model.sample_rate:.1f}s "
-                        f"-> "
-                        f"{block_end/self.model.sample_rate:.1f}s"
-                    )
+                    #print(
+                     #   f"  Block {block_idx + 1}: "
+                      #  f"{block_start/self.model.sample_rate:.1f}s "
+                       # f"-> "
+                        #f"{block_end/self.model.sample_rate:.1f}s"
+                    #)
 
                     block = wav[:, :, block_start:block_end]
 
-                    latents = []
-
-                    for start in range(0, block.shape[-1], step):
-
-                        end = min(
-                            start + chunk_length,
-                            block.shape[-1],
+                 
+                    encoded = self.model.encode(block)
+            
+                    encoded = [
+                        (
+                            codes.cpu(),
+                            scale.cpu() if scale is not None else None,
                         )
+                        for codes, scale in encoded
+                    ]
 
-                        chunk = block[:, :, start:end]
-
-                        pad = chunk_length - chunk.shape[-1]
-
-                        if pad > 0:
-                            chunk = torch.nn.functional.pad(
-                                chunk,
-                                (0, pad),
-                            )
-
-                        encoded = self.model.encode(chunk)
-
-                        codes, scale = encoded[0]
-
-                        latents.append(
-                            (
-                                codes.cpu(),
-                                scale.cpu() if scale is not None else None,
-                            )
-                        )
-
-                    block_file = (
-                        recording_folder
-                        / f"block_{block_idx:03d}.pt"
-                    )
-
-                    print("Encode:", time.time() - t0)
-
-
-                    t0 = time.time()
+              
                     torch.save(
-                        latents,
-                        block_file,
+                    encoded,
+                    recording_folder / f"block_{block_idx:03d}.pt",
                     )
-                    print("Save:", time.time() - t0)
+                    
 
-                    del latents
+                    del encoded
+                    del block
                     gc.collect()
 
             del wav
             gc.collect()
+            print("Encode full file:", time.time() - t1)
 
         return timing
 
@@ -286,8 +208,6 @@ class EncodecCompression:
             metadata = torch.load(metadata_file)
 
             total_length = metadata["length"]
-            chunk_length = metadata["chunk_length"]
-            step = metadata["step"]
             block_size = metadata["block_size"]
 
             reconstructed = torch.zeros(
@@ -295,47 +215,32 @@ class EncodecCompression:
                 dtype=torch.float32,
             )
 
-            with torch.inference_mode():
+            block_files = sorted(recording_folder.glob("block_*.pt"))
 
-                block_files = sorted(recording_folder.glob("block_*.pt"))
+            with torch.inference_mode():
 
                 for block_idx, block_file in enumerate(block_files):
 
                     print(f"  Block {block_idx+1}/{len(block_files)}")
 
-                    latents = torch.load(block_file)
+                    encoded = torch.load(block_file)
 
-                    decoded_chunks = []
-
-                    for latent in latents:
-
-                        decoded = self.model.decode([latent])
-
-                        decoded_chunks.append(decoded)
-
-                    block_length = min(
-                        block_size,
-                        total_length - block_idx * block_size,
-                    )
-
-                    reconstructed_block = self._overlap_add(
-                        decoded_chunks,
-                        block_length,
-                        chunk_length,
-                        step,
-                        decoded_chunks[0].dtype,
-                    )
+                    decoded = self.model.decode([encoded])
 
                     start = block_idx * block_size
-                    end = start + block_length
+                    end = min(
+                    start + decoded.shape[-1],
+                    total_length,
+                    )
 
-                    reconstructed[:, :, start:end] = reconstructed_block[
-                        :, :, :block_length
+                    reconstructed[:, :, start:end] = decoded[
+                        :, :, :end - start
                     ]
 
-                    del latents
-                    del decoded_chunks
-                    del reconstructed_block
+                  
+                    del encoded
+                    del decoded
+                 
 
                     gc.collect()
 
