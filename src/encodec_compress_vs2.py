@@ -11,6 +11,7 @@ import torch
 import pprint
 from encodec import EncodecModel
 from encodec.utils import convert_audio
+from bitpack import *
 
 class EncodecCompression:
 
@@ -169,12 +170,16 @@ class EncodecCompression:
                    
         
 
-                        np.save(
-                            recording_folder / f"block_{block_idx:03d}_codes.npy",
+                        #np.save(
+                         #   recording_folder / f"block_{block_idx:03d}_codes.npy",
+                          #  codes,
+                           # allow_pickle=False,
+                        #)
+                        
+                        pack_uint10(
                             codes,
-                            allow_pickle=False,
+                            recording_folder / f"block_{block_idx:03d}_codes.bin",
                         )
-
                 
                         torch.save(
                             {
@@ -259,11 +264,15 @@ class EncodecCompression:
                             # Save
                             ##########################################################
                             # Save codes
-                            np.save(
-                                recording_folder / f"block_{block_idx:03d}_batch_{num_batches:04d}_codes.npy",
+                            #np.save(
+                             #   recording_folder / f"block_{block_idx:03d}_batch_{num_batches:04d}_codes.npy",
+                              #  codes,
+                               # allow_pickle=False,
+                            #)
+                            pack_uint10(
                                 codes,
-                                allow_pickle=False,
-                            )
+                                recording_folder / f"block_{block_idx:03d}_batch_{num_batches:04d}_codes.bin",
+                                )
 
                             if scale is not None:
                                 np.save(
@@ -360,12 +369,15 @@ class EncodecCompression:
                         ###################################################
                         if window_size is None:
 
-                            codes = torch.from_numpy(
-                                np.load(
-                                    recording_folder /
-                                    f"{prefix}_codes.npy"
-                                )
-                            ).to(torch.int64)
+                            #codes = torch.from_numpy(
+                             #   np.load(
+                              #      recording_folder /
+                               #     f"{prefix}_codes.npy"
+                                #)
+                            #).to(torch.int64)
+                            codes = unpack_uint10(recording_folder /f"{prefix}_codes.bin")
+                            codes = torch.from_numpy(codes).long()
+
 
                             scale_file = (
                                 recording_folder /
@@ -401,12 +413,15 @@ class EncodecCompression:
 
                             for batch_idx in range(saved["num_batches"]):
 
-                                codes = torch.from_numpy(
-                                    np.load(
-                                        recording_folder /
-                                        f"{prefix}_batch_{batch_idx:04d}_codes.npy"
-                                    )
-                                ).to(torch.int64)
+                                #codes = torch.from_numpy(
+                                 #   np.load(
+                                  #      recording_folder /
+                                   #     f"{prefix}_batch_{batch_idx:04d}_codes.npy"
+                                    #)
+                                #).to(torch.int64)
+                                codes = unpack_uint10(recording_folder /f"{prefix}_batch_{batch_idx:04d}_codes.bin")
+                                codes = torch.from_numpy(codes).long()
+
 
                                 scale_file = (
                                     recording_folder /
