@@ -104,16 +104,16 @@ def parse_args():
     )
 
     # EnCodec parameters
-    parser.add_argument("--parameter-compression", default="6.0",
+    parser.add_argument("--parameter-compression", default="24.0",
                         help="Target bandwidth (kbps) passed to EncodecModel.set_target_bandwidth.")
     parser.add_argument("--model-name", choices=["24khz", "48khz"], default="24khz",
                         help="Pretrained EnCodec model to use.")
-    parser.add_argument("--block-duration-sec", type=float, default=600,
+    parser.add_argument("--block-duration-sec", type=float, default=300,
                         help="Length of each audio block processed at a time (seconds).")
-    parser.add_argument("--window-duration-sec", type=float, default=None,
+    parser.add_argument("--window-duration-sec", type=float, default=60,
                         help="If set, splits each block into fixed-length windows and encodes "
                              "them in batches instead of encoding the whole block at once.")
-    parser.add_argument("--batch-size", type=int, default=1,
+    parser.add_argument("--batch-size", type=int, default=5,
                         help="Number of windows encoded per batch (only used with --window-duration-sec).")
 
     # Logging

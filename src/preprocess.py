@@ -170,9 +170,10 @@ class Preprocessing:
             else:
                 raise FileNotFoundError(f"No file found for pattern: {file_name}_*.wav in {self.compressed_audio_path}")
     
+        
         else: 
             self.compressed_audio_path = Path(self.species_folder, "Compressed_Audio", f"{method_compression}_{parameter_compression}")
-            audio_path=Path(self.compressed_audio_path)/ f"{file_name}_{method_compression}_{parameter_compression}.{method_compression}"
+            audio_path=Path(self.compressed_audio_path)/ f"{file_name}_{method_compression}_{parameter_compression}{self.audio_extension}"
              
         
         
@@ -662,6 +663,8 @@ class Preprocessing:
                 # Append the segments and labels
                 X_calls.extend(X_data)
                 Y_calls.extend(y_data) 
+
+            print("Nb of labels ", np.unique(Y_calls, return_counts=True)) 
 
             
         print("Nb of labels ", np.unique(Y_calls, return_counts=True))   

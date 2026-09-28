@@ -128,7 +128,7 @@ class Model:
                 "Only cross entropy loss is supported at the moment"
             )
         
-    def _set_scheduler(self, patience=4):
+    def _set_scheduler(self, patience=5):
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer,
             mode="min",
@@ -295,6 +295,9 @@ class Model:
         train_losses = []
         min_val_loss = torch.inf
 
+        best_val_loss = float("inf")
+        best_model_state = None
+        early_stop_counter = 0
 
         epoch_bar = tqdm(range(self.n_epochs), desc="Training", unit="epoch")
 
@@ -306,10 +309,21 @@ class Model:
             val_losses.append(epoch_val_loss)
 
             # Save best model BEFORE scheduler step
-            if save and epoch_val_loss < min_val_loss:
+            """if save and epoch_val_loss < min_val_loss:
                 min_val_loss = epoch_val_loss
                 self.save_model(self.results_path, model_name)
-            
+            """
+            if epoch_val_loss < best_val_loss - min_delta:
+                best_val_loss = epoch_val_loss
+                early_stop_counter = 0
+                best_model_state = deepcopy(self.cnn.state_dict())
+
+                if save:
+                    self.save_model(self.results_path, model_name)
+
+            else:
+                early_stop_counter += 1
+
             # NEW: update LR based on validation loss
             self.scheduler.step(epoch_val_loss)
 
@@ -323,11 +337,18 @@ class Model:
                 'best_val':   f'{min_val_loss:.4f}' if min_val_loss != torch.inf else 'N/A'
             })
             
+            """
             if early_stopping and self._early_stop(epoch_val_loss, patience=patience, min_delta=min_delta):
                 tqdm.write(f"Early stopping triggered at epoch {epoch+1}")
                 break
-        
-        
+            """
+            if early_stopping and early_stop_counter >= patience:
+                tqdm.write(f"Early stopping triggered at epoch {epoch+1}")
+                break
+
+        # Restore best model
+        if best_model_state is not None:
+            self.cnn.load_state_dict(best_model_state)
         
         return train_losses, val_losses
 

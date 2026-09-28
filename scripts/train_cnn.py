@@ -55,9 +55,9 @@ SPECIES_ARCH = {
         learning_rate=0.0001, num_epochs=50, batch_size=64,
     ),
     "ptw": dict(
-        conv_layers=1, fc_layers=2, conv_kernel=8, conv_filters=16,
+        conv_layers=2, fc_layers=2, conv_kernel=8, conv_filters=16,
         dropout_rate=0.3, fc_units=64, max_pooling_size=4,
-        learning_rate=0.001, num_epochs=50, batch_size=64,
+        learning_rate=0.0001, num_epochs=50, batch_size=64,
     ),
     "gibbon": dict(
         conv_layers=1, fc_layers=2, conv_kernel=8, conv_filters=8,
@@ -206,6 +206,8 @@ def main():
         config.preprocessing.audio_extension = ".npy"
     elif method_compression in ("mp3", "aac", "opus", "ogg", "flac"):
         config.preprocessing.audio_extension = f".{method_compression}"
+    elif method_compression == "encodec":
+        config.preprocessing.audio_extension = ".wav"
     else:
         config.preprocessing.audio_extension = ".wav"
 
@@ -277,7 +279,7 @@ def main():
             X_train=X_train, Y_train=Y_train,
             X_val=X_val, Y_val=Y_val,
             model_name=tag,
-            early_stopping=True, patience=10, min_delta=0.005,
+            early_stopping=False, patience=15, min_delta=0.0005,
         )
         del model
 

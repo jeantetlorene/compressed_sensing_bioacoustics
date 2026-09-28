@@ -281,6 +281,7 @@ class CS:
             del compressed_file_int16
 
             loaded_list=compressed_file.reshape((nb_windows, len(idx)))
+            
             reconstructed_frames = Parallel(n_jobs=self.n_jobs)(
                         delayed(self.reconstruct_frame)(y, solver, alpha, A) for y in tqdm(loaded_list)
                     )

@@ -24,17 +24,22 @@ python scripts/run_compression.py --help
 for a loop on a powershell : 
 
 $jobs = @{
-    "mp3"  = @("8k", "32k", "64k")
-    "opus" = @("8k", "40k", "112k")
-    "aac"  = @("8k", "40k", "96k")
-    "ogg"  = @("0", "5", "10" )
-    "flac" = @("0", "6", "12")
+    "mp3"  = @("32k", "64k", "128k")
+    "opus" = @("8k", "56k", "160k")
+    "aac"  = @("8k", "56k", "144k")
+    "ogg"  = @("0", "4", "9")
+    "flac" = @("0", "2", "4")
 }
 
 foreach ($method in $jobs.Keys) {
     foreach ($param in $jobs[$method]) {
+
         Write-Host "=== $method @ $param ==="
-        python scripts/run_compression.py --species gibbon --parameter-compression $param
+
+        python scripts/run_compression.py `
+            --species ptw `
+            --method $method `
+            --parameter-compression $param
     }
 }
 
@@ -222,15 +227,14 @@ def _save_ledger(path: Path, ledger: dict) -> None:
         json.dump(ledger, f, indent=2)
 
 
-def record_run(tracking_dir: Path, method: str, parameter: str,
+def record_run(tracking_dir: Path, args: argparse.Namespace,
                elapsed: float, status: str) -> None:
-    ledger_path = tracking_dir / "run_ledger.json"
+    ledger_path = tracking_dir / "compress_run_ledger.json"
     ledger = _load_ledger(ledger_path)
 
     ledger["runs"].append({
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "method_compression": method,
-        "parameter_compression": parameter,
+        "parameters": vars(args),
         "elapsed_seconds": round(elapsed, 2),
         "status": status,          # "completed" or "crashed"
     })
@@ -310,7 +314,7 @@ def main():
             monitor_thread.join()
 
         log.info("Finished in %.2f seconds (status: %s).", elapsed, status)
-        record_run(tracking_dir, args.method_compression, args.parameter_compression, elapsed, status)
+        record_run(tracking_dir, args, elapsed, status)
 
         tracking_dir.mkdir(parents=True, exist_ok=True)
         save_path = tracking_dir / f"time_execution_{args.method_compression}_{args.parameter_compression}.txt"
