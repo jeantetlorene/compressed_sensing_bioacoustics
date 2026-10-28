@@ -83,28 +83,28 @@ def parse_args():
     # Paths
     parser.add_argument(
         "--folder-audio",
-        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/PTW/Audio",
+        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Bats/Audio",
         help="Folder containing raw .wav files.",
     )
     parser.add_argument(
         "--folder-saved",
-        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/PTW/Compressed_Audio",
+        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Bats/Compressed_Audio",
         help="Root output folder (sub-folders are created automatically).",
     )
     parser.add_argument(
         "--folder-tracking",
-        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/PTW/tracking",
+        default="C:/Users/loren/Documents/Postdoc/Compressed_sensing/Data/Bats/tracking",
         help="Folder where execution-time logs are written.",
     )
 
     # CS parameters
-    parser.add_argument("--sample-rate", type=int, default=48000,
+    parser.add_argument("--sample-rate", type=int, default=256000,
                         help="Recording sample rate in Hz.")
-    parser.add_argument("--frame-size", type=int, default=1200,
+    parser.add_argument("--frame-size", type=int, default=1024,
                         help="Frame length in samples.")
     parser.add_argument("--overlap", type=float, default=0,
                         help="Fractional frame overlap [0, 1).")
-    parser.add_argument("--compression-rate", type=float, default=0.2,
+    parser.add_argument("--compression-rate", type=float, default=0.3,
                         help="Fraction of measurements to keep (M = rate * N).")
     parser.add_argument("--n-jobs", type=int, default=max(1, os.cpu_count() - 1),
                         help="Parallel workers (-1 = all cores).")

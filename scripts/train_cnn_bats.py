@@ -154,7 +154,7 @@ def parse_args():
     )
     parser.add_argument("--n-runs", type=int, default=10, help="Number of training runs.")
     parser.add_argument("--num-epochs", type=int, default=50)
-    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])

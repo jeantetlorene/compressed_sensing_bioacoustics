@@ -1,9 +1,9 @@
 from pathlib import Path
-from collections import defaultdict
 from glob import glob
 import json
 import pickle
 import numpy as np
+import signal
 import soundfile as sf
 import librosa
 from tqdm import tqdm
@@ -39,13 +39,14 @@ class BatsDatasetCreator:
         label_map_path,
         filters_path,
         sample_rate=256000,
-        downsample_rate=128000,
+        downsample_rate=192000,
         window_size_sec=1,
+        spec_window_sec=None,
         n_fft=512,
         hop_length=384,
         n_mels=128,
-        f_min=15000,
-        f_max=64000,
+        f_min=21000,
+        f_max=68000,
         method_compression=None,
         parameter_compression=None,
         **kwargs,
@@ -60,7 +61,14 @@ class BatsDatasetCreator:
         filters_path    : Path to the bats_filters/ directory
         sample_rate     : Original sample rate of the recordings
         downsample_rate : Target sample rate after resampling (default: 128000 Hz)
-        window_size_sec : Duration of each window in seconds (default: 1)
+        window_size_sec : Duration of each window in seconds (default: 1). Must stay
+                          at 1 s so the pre-computed balancing indices and window
+                          masks stay aligned.
+        spec_window_sec : Duration of the audio converted to each spectrogram
+                          (default: None = window_size_sec). If smaller, each masked
+                          window is split into non-overlapping sub-windows of this
+                          length (e.g. 0.5 → two spectrograms per 1-s window, both
+                          with the parent window's label).
         n_fft           : FFT window size for mel-spectrogram
         hop_length      : Hop length for mel-spectrogram
         n_mels          : Number of mel frequency bins
@@ -79,7 +87,15 @@ class BatsDatasetCreator:
         self.filters_path = Path(filters_path)
         self.original_sample_rate = sample_rate
         self.downsample_rate = downsample_rate
-        self.window_size = window_size_sec * downsample_rate
+        self.window_size = int(round(window_size_sec * downsample_rate))
+        if spec_window_sec is None:
+            spec_window_sec = window_size_sec
+        self.spec_window_size = int(round(spec_window_sec * downsample_rate))
+        if self.window_size % self.spec_window_size != 0:
+            raise ValueError(
+                f"spec_window_sec ({spec_window_sec}) must evenly divide "
+                f"window_size_sec ({window_size_sec})."
+            )
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.n_mels = n_mels
@@ -173,42 +189,45 @@ class BatsDatasetCreator:
             return None
         if trim:
             audio = self._trim_audio(audio, sr)
+
         audio_ds = self._downsample(audio, sr)
         return label_str, self._segment(audio_ds)
 
-    def _load_and_segment_files(self, txt_path, trim=False):
+    def _iter_windows(self, txt_path, trim=False):
         """
-        Read file list, load audio sequentially, downsample, and segment.
+        Read file list, load audio sequentially, downsample, segment, and yield
+        windows one at a time so that the full set of raw windows is never held
+        in memory (it does not fit in RAM for the training set).
 
         trim : remove last 2-3 s from each file before resampling (training only).
 
-        Returns
-        -------
-        class_windows    : dict label_str → list of windows (np.ndarray)
-        class_global_idx : dict label_str → list of global insertion indices
+        Yields
+        ------
+        (global_idx, class_idx, window) in processing order.
         """
         filenames = Path(txt_path).read_text().strip().split("\n")
         filenames = [f.strip() for f in filenames if f.strip()]
 
-        class_windows = defaultdict(list)
-        class_global_idx = defaultdict(list)
         global_counter = 0
-
         for filename in tqdm(filenames, desc=f"Loading {Path(txt_path).name}"):
             result = self._process_file(filename, trim=trim)
             if result is None:
                 continue
             label_str, windows = result
+            class_idx = self.label_map[label_str]
             for w in windows:
-                class_windows[label_str].append(w)
-                class_global_idx[label_str].append(global_counter)
+                yield global_counter, class_idx, w
                 global_counter += 1
 
-        return class_windows, class_global_idx
+    def _window_to_images(self, window):
+        """Split one 1-s window into sub-windows and return their spectrograms (k, n_mels, T)."""
+        k = self.window_size // self.spec_window_size
+        subs = window.reshape(k, self.spec_window_size)
+        return np.stack([self._convert_single_to_image(s) for s in subs]).astype(np.float32)
 
-    def _apply_class_balancing(self, class_windows, class_global_idx):
+    def _balanced_order(self, Y_all, selected_indices):
         """
-        Subsample over-represented classes using pre-computed global indices.
+        Global indices of the class-balanced training set, in X_balanced order.
 
         The npz keys are class integer indices (2=LAECAP, 3=TADAEG). Each array
         contains GLOBAL positions (into the full training window array sorted by
@@ -219,52 +238,37 @@ class BatsDatasetCreator:
         indices, reproducing the ordering of X_balanced in the reference notebook
         so that the pre-computed window mask aligns correctly.
         """
-        # Build the full ordered array across all classes
-        all_global, all_windows, all_labels = [], [], []
-        for label_str, windows in class_windows.items():
-            class_idx = self.label_map[label_str]
-            for w, g in zip(windows, class_global_idx[label_str]):
-                all_global.append(g)
-                all_windows.append(w)
-                all_labels.append(class_idx)
-
-        order = np.argsort(all_global)
-        X_all = np.array([all_windows[i] for i in order])
-        Y_all = np.array([all_labels[i] for i in order])
-
-        # Load selected global indices per over-represented class
-        npz = np.load(self.filters_path / "selected_indices_reduction_2000.npz")
-        selected_indices = {int(k): npz[k].astype(int) for k in npz.files}
-
-        # Build output in class-grouped order, matching the notebook's X_balanced:
-        #   - over-represented classes: windows in the saved (random.sample) index order
-        #   - other classes: all windows in global processing order
-        X_out, Y_out = [], []
+        order = []
         for class_idx_int in sorted(np.unique(Y_all)):
             if class_idx_int in selected_indices:
                 keep_positions = selected_indices[class_idx_int]
-                valid = keep_positions[keep_positions < len(X_all)]
-                X_out.extend(X_all[valid])
-                Y_out.extend(Y_all[valid])
+                order.append(keep_positions[keep_positions < len(Y_all)])
             else:
-                class_mask = Y_all == class_idx_int
-                X_out.extend(X_all[class_mask])
-                Y_out.extend(Y_all[class_mask])
+                order.append(np.flatnonzero(Y_all == class_idx_int))
+        return np.concatenate(order)
 
-        return np.array(X_out), np.array(Y_out)
-
-    def _apply_mask(self, X, Y, mask_path):
-        """Apply a pre-computed boolean mask to remove empty/noise windows."""
+    def _load_mask(self, mask_path, expected_len):
+        """Load a pre-computed boolean mask that removes empty/noise windows."""
         mask = np.load(mask_path)
-        if mask.shape[0] != X.shape[0]:
+        if mask.shape[0] != expected_len:
             raise ValueError(
-                f"Mask length {mask.shape[0]} does not match X length {X.shape[0]}. "
+                f"Mask length {mask.shape[0]} does not match number of windows {expected_len}. "
                 "Ensure files are processed in the same order as when the mask was created."
             )
-        return X[mask], Y[mask]
+        return mask
+
+    def _assemble(self, images_by_global, global_order, Y_all):
+        """Stack spectrograms of the given global windows (sub-windows consecutive)."""
+        k = self.window_size // self.spec_window_size
+        first = next(iter(images_by_global.values()))
+        X = np.empty((len(global_order) * k,) + first.shape[1:], dtype=np.float32)
+        for i, g in enumerate(global_order):
+            X[i * k:(i + 1) * k] = images_by_global[g]
+        Y = np.repeat(Y_all[global_order], k)
+        return X, Y
 
     def _convert_single_to_image(self, audio):
-        """Convert a 1-sec audio window to a normalized mel-spectrogram.
+        """Convert an audio window to a normalized mel-spectrogram.
 
         Replicates Preprocessing.convert_single_to_image() from preprocess.py.
         """
@@ -283,12 +287,6 @@ class BatsDatasetCreator:
         spec_scaled = (spec_norm - spec_norm.min()) / (spec_norm.max() - spec_norm.min())
         return spec_scaled
 
-    def _convert_to_spectrograms(self, windows):
-        """Batch-convert audio windows to mel-spectrograms."""
-        return np.array(
-            [self._convert_single_to_image(w) for w in tqdm(windows, desc="Spectrograms")]
-        )
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -298,23 +296,40 @@ class BatsDatasetCreator:
         Build the training dataset.
 
         Steps: load & segment → class balancing → window mask → spectrograms.
+        Windows are streamed: only those that can survive class balancing are
+        converted to spectrograms (raw audio windows are not kept in memory).
 
         Returns
         -------
         X : np.ndarray, shape (N, n_mels, time_steps)
         Y : np.ndarray, shape (N,), integer class labels
         """
-        class_windows, class_global_idx = self._load_and_segment_files(self.train_txt, trim=True)
+        npz = np.load(self.filters_path / "selected_indices_reduction_2000.npz")
+        selected_indices = {int(k): npz[k].astype(int) for k in npz.files}
+        needed = set(np.concatenate(list(selected_indices.values())).tolist())
+
+        images_by_global, labels = {}, []
+        for g, class_idx, w in self._iter_windows(self.train_txt, trim=True):
+            labels.append(class_idx)
+            if class_idx not in selected_indices or g in needed:
+                images_by_global[g] = self._window_to_images(w)
+        Y_all = np.array(labels)
+
         label_names = {v: k for k, v in self.label_map.items()}
-        before = {label_names[self.label_map[s]]: len(w) for s, w in class_windows.items()}
-        print(f"Before balancing: {sum(before.values())} windows — {before}")
-        X, Y = self._apply_class_balancing(class_windows, class_global_idx)
-        after_bal = dict(zip(*np.unique(Y, return_counts=True)))
-        print(f"After  balancing: {X.shape[0]} windows — {after_bal}")
-        X, Y = self._apply_mask(X, Y, self.filters_path / "window_decisions_training_mask.npy")
-        after_mask = dict(zip(*np.unique(Y, return_counts=True)))
-        print(f"After  mask:      {X.shape[0]} windows — {after_mask}")
-        X = self._convert_to_spectrograms(X)
+        before = {label_names[c]: int(n) for c, n in zip(*np.unique(Y_all, return_counts=True))}
+        print(f"Before balancing: {len(Y_all)} windows — {before}")
+
+        order = self._balanced_order(Y_all, selected_indices)
+        print(f"After  balancing: {len(order)} windows — {dict(zip(*np.unique(Y_all[order], return_counts=True)))}")
+
+        mask = self._load_mask(self.filters_path / "window_decisions_training_mask.npy", len(order))
+        order = order[mask]
+        print(f"After  mask:      {len(order)} windows — {dict(zip(*np.unique(Y_all[order], return_counts=True)))}")
+
+        X, Y = self._assemble(images_by_global, order, Y_all)
+        del images_by_global
+        if self.spec_window_size != self.window_size:
+            print(f"After  split:     {X.shape[0]} spectrograms of {self.spec_window_size} samples")
         return X, Y
 
     def create_testing_dataset(self):
@@ -322,30 +337,31 @@ class BatsDatasetCreator:
         Build the testing dataset.
 
         Steps: load & segment → window mask → spectrograms (no class balancing).
+        Windows are streamed and only masked-in windows are converted.
 
         Returns
         -------
         X : np.ndarray, shape (N, n_mels, time_steps)
         Y : np.ndarray, shape (N,), integer class labels
         """
-        class_windows, class_global_idx = self._load_and_segment_files(self.test_txt)
+        mask = np.load(self.filters_path / "window_decisions_testing_mask.npy")
 
-        all_global, all_windows, all_labels = [], [], []
-        for label_str, windows in class_windows.items():
-            class_idx = self.label_map[label_str]
-            for w, g in zip(windows, class_global_idx[label_str]):
-                all_global.append(g)
-                all_windows.append(w)
-                all_labels.append(class_idx)
+        images_by_global, labels = {}, []
+        for g, class_idx, w in self._iter_windows(self.test_txt):
+            labels.append(class_idx)
+            if g < len(mask) and mask[g]:
+                images_by_global[g] = self._window_to_images(w)
+        Y_all = np.array(labels)
 
-        order = np.argsort(all_global)
-        X = np.array([all_windows[i] for i in order])
-        Y = np.array([all_labels[i] for i in order])
+        print(f"Before mask: {len(Y_all)} windows — {dict(zip(*np.unique(Y_all, return_counts=True)))}")
+        mask = self._load_mask(self.filters_path / "window_decisions_testing_mask.npy", len(Y_all))
+        order = np.flatnonzero(mask)
+        print(f"After mask: {len(order)} windows — {dict(zip(*np.unique(Y_all[order], return_counts=True)))}")
 
-        print(f"Before mask: {X.shape[0]} windows — {dict(zip(*np.unique(Y, return_counts=True)))}")
-        X, Y = self._apply_mask(X, Y, self.filters_path / "window_decisions_testing_mask.npy")
-        print(f"After mask: {X.shape[0]} windows — {dict(zip(*np.unique(Y, return_counts=True)))}")
-        X = self._convert_to_spectrograms(X)
+        X, Y = self._assemble(images_by_global, order, Y_all)
+        del images_by_global
+        if self.spec_window_size != self.window_size:
+            print(f"After split: {X.shape[0]} spectrograms of {self.spec_window_size} samples")
         return X, Y
 
     def save_dataset(self, X, Y, output_path, dataset_type):

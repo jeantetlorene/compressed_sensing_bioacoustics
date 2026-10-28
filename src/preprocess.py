@@ -579,7 +579,6 @@ class Preprocessing:
 
         return X_augmented, Y_augmented
 
-    # lorene new create dataset function
     def create_dataset(self, dataset="train", method_compression=None, parameter_compression=None, preprocessing=True, data_augmentation=False, noise_reduction=False):
         # Read all names of the files
         files_path=Path(self.species_folder,"DataFiles", dataset+".txt")

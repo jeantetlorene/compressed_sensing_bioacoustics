@@ -55,6 +55,7 @@ class Compression:
             audio_segment = AudioSegment.from_file(file_input)
             if self.method_compression=="aac":
                 audio_segment.export(out_f=file_output, format="adts", parameters=self.parameters)
+
             else : 
                 audio_segment.export(out_f=file_output, format=self.method_compression, parameters=self.parameters)
         return timing

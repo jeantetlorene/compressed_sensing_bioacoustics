@@ -11,6 +11,7 @@ import torch
 import pprint
 from encodec import EncodecModel
 from encodec.utils import convert_audio
+from tqdm.auto import tqdm
 from bitpack import *
 
 class EncodecCompression:
@@ -24,6 +25,7 @@ class EncodecCompression:
         block_duration_sec=600,
         window_duration_sec=None,
         batch_size=1,
+        device=None,
     ):
 
         self.folder_audio = Path(folder_audio)
@@ -63,8 +65,21 @@ class EncodecCompression:
             raise ValueError("model_name must be '24khz' or '48khz'")
         
         self.model.set_target_bandwidth(self.bandwidth)
-        self.model.to("cpu")
+        # Use the GPU when available; the full recording stays on the CPU,
+        # only the block / batch being encoded or decoded is moved to the device
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = torch.device(device)
+        print(f"EnCodec running on: {self.device}")
+
+        self.model.to(self.device)
         self.model.eval()
+
+
+    def _free_memory(self):
+        gc.collect()
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
 
 
     ####################################################################
@@ -79,13 +94,15 @@ class EncodecCompression:
             self.block_duration_sec * self.model.sample_rate
         )
 
-        for file in self.files:
+        durations = []
+        skipped = 0
+
+        pbar = tqdm(self.files, desc="Compressing", unit="file")
+        for file in pbar:
 
             timing.append(
                 datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-5]
             )
-
-            print(f"\nCompressing: {file}")
 
             file_input = self.folder_audio / file
 
@@ -100,8 +117,10 @@ class EncodecCompression:
 
             # Skip if metadata already exists
             if metadata_file.exists():
-                print("Already compressed.")
+                skipped += 1
                 continue
+
+            t1 = time.time()
 
             #wav, sr = torchaudio.load(file_input)
 
@@ -131,7 +150,6 @@ class EncodecCompression:
                 },
                 metadata_file,
             )
-            t1 = time.time()
             with torch.inference_mode():
 
                 for block_idx, block_start in enumerate(
@@ -157,7 +175,7 @@ class EncodecCompression:
                     # ORIGINAL ENCODEC
                     ##############################################################
                     if self.window_duration_sec is None:
-                        codes, scale = self.model.encode(block)[0]
+                        codes, scale = self.model.encode(block.to(self.device))[0]
 
                         codes = codes.cpu().numpy().astype(np.uint16)
 
@@ -252,7 +270,7 @@ class EncodecCompression:
                                 i:i+self.batch_size
                             ]
 
-                            codes, scale = self.model.encode(batch)[0]
+                            codes, scale = self.model.encode(batch.to(self.device))[0]
                             
                             
                             codes = codes.cpu().numpy().astype(np.uint16)
@@ -299,13 +317,32 @@ class EncodecCompression:
                  
 
                     del block
-                    gc.collect()
+                    self._free_memory()
 
             del wav
-            gc.collect()
-            print("Encode full file:", time.time() - t1)
+            self._free_memory()
+
+            durations.append(time.time() - t1)
+            pbar.set_postfix(
+                last=f"{durations[-1]:.1f}s",
+                mean=f"{np.mean(durations):.1f}s",
+            )
+
+        self._print_summary("Compression", durations, skipped)
 
         return timing
+
+    @staticmethod
+    def _print_summary(task, durations, skipped):
+        msg = f"{task} done: {len(durations)} file(s) processed"
+        if skipped:
+            msg += f", {skipped} skipped (already done)"
+        if durations:
+            msg += (
+                f" | total {sum(durations):.1f}s"
+                f", mean {np.mean(durations):.1f}s/file"
+            )
+        print(msg)
 
     ####################################################################
     # Reconstruction
@@ -313,9 +350,11 @@ class EncodecCompression:
 
     def reconstruct(self):
 
-        for file in self.files:
+        durations = []
+        skipped = 0
 
-            print(f"\nReconstructing: {file}")
+        pbar = tqdm(self.files, desc="Reconstructing", unit="file")
+        for file in pbar:
 
             recording_folder = (
                 self.latent_folder
@@ -330,11 +369,12 @@ class EncodecCompression:
             )
 
             if file_output.exists():
-                print("Already reconstructed.")
+                skipped += 1
                 continue
 
             if not metadata_file.exists():
-                print("Metadata not found.")
+                tqdm.write(f"Metadata not found for {file}, skipping.")
+                skipped += 1
                 continue
 
             metadata = torch.load(metadata_file)
@@ -376,7 +416,7 @@ class EncodecCompression:
                                 #)
                             #).to(torch.int64)
                             codes = unpack_uint10(recording_folder /f"{prefix}_codes.bin")
-                            codes = torch.from_numpy(codes).long()
+                            codes = torch.from_numpy(codes).long().to(self.device)
 
 
                             scale_file = (
@@ -385,7 +425,7 @@ class EncodecCompression:
                             )
 
                             if scale_file.exists():
-                                scale = torch.from_numpy(np.load(scale_file)).float()
+                                scale = torch.from_numpy(np.load(scale_file)).float().to(self.device)
                             else:
                                 scale = None
 
@@ -420,7 +460,7 @@ class EncodecCompression:
                                     #)
                                 #).to(torch.int64)
                                 codes = unpack_uint10(recording_folder /f"{prefix}_batch_{batch_idx:04d}_codes.bin")
-                                codes = torch.from_numpy(codes).long()
+                                codes = torch.from_numpy(codes).long().to(self.device)
 
 
                                 scale_file = (
@@ -429,7 +469,7 @@ class EncodecCompression:
                                 )
 
                                 if scale_file.exists():
-                                    scale = torch.from_numpy(np.load(scale_file)).float()
+                                    scale = torch.from_numpy(np.load(scale_file)).float().to(self.device)
                                 else:
                                     scale = None
 
@@ -465,7 +505,14 @@ class EncodecCompression:
                             del decoded_windows
                             del reconstructed
 
-                        gc.collect()
-                print("Decode full file:", time.time() - t1)
-                    
+                        self._free_memory()
+
+            durations.append(time.time() - t1)
+            pbar.set_postfix(
+                last=f"{durations[-1]:.1f}s",
+                mean=f"{np.mean(durations):.1f}s",
+            )
+
+        self._print_summary("Reconstruction", durations, skipped)
+
 
